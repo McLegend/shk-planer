@@ -228,7 +228,7 @@ function setView(v) {
         <form id="addWorkerForm" class="add-worker">
           <label class="field"><span>Nummer</span><input name="nr" inputmode="numeric" pattern="[0-9]{1,8}" required></label>
           <label class="field wide"><span>Name</span><input name="name" maxlength="60" required></label>
-          <label class="field"><span>PIN (mind. 6 Ziffern)</span><input name="pin" inputmode="numeric" pattern="[0-9]{6,12}" required title="6 bis 12 Ziffern"></label>
+          <label class="field"><span>PIN (mind. 4 Ziffern)</span><input name="pin" inputmode="numeric" pattern="[0-9]{4,12}" required title="4 bis 12 Ziffern"></label>
           <button class="btn primary">${icon('add')}Anlegen</button>
         </form>
         <p class="err" id="workerErr" style="margin-top:8px"></p>
@@ -440,6 +440,7 @@ function renderWorker() {
       <h1>Konto</h1>
       ${avatar(ui.session.nr, name || '?', 'lg')}
       <div><div class="name">${esc(name)}</div><div class="hint">Mitarbeiter-Nr. ${esc(ui.session.nr)}</div></div>
+      <button class="btn" data-act="pin">PIN ändern</button>
       <button class="btn" data-act="logout">Abmelden</button>
     </div>`;
     return;
@@ -619,6 +620,39 @@ async function saveForm(e) {
   }
 }
 
+// ================= Passwort / PIN ändern =================
+function openPwDlg() {
+  const office = ui.session?.role === 'office';
+  const f = $('#pwForm');
+  f.reset();
+  $('#pwErr').textContent = '';
+  $('#pwTitle').textContent = office ? 'Passwort ändern' : 'PIN ändern';
+  $('#pwOldLabel').textContent = office ? 'Bisheriges Passwort' : 'Bisherige PIN';
+  $('#pwNewLabel').textContent = office ? 'Neues Passwort (mind. 4 Zeichen)' : 'Neue PIN (mind. 4 Ziffern)';
+  for (const n of ['old', 'neu', 'neu2']) f.elements[n].inputMode = office ? 'text' : 'numeric';
+  $('#pwDlg').showModal();
+}
+
+async function savePw(e) {
+  e.preventDefault();
+  const office = ui.session?.role === 'office';
+  const f = e.target, err = $('#pwErr');
+  const oldS = f.elements.old.value, neu = f.elements.neu.value, neu2 = f.elements.neu2.value;
+  err.textContent = '';
+  if (office ? neu.length < 4 : !/^[0-9]{4,12}$/.test(neu)) {
+    err.textContent = office ? 'Das neue Passwort braucht mindestens 4 Zeichen.' : 'Die neue PIN muss aus 4 bis 12 Ziffern bestehen.';
+    return;
+  }
+  if (neu !== neu2) { err.textContent = 'Die neuen Eingaben stimmen nicht überein.'; return; }
+  const btn = f.querySelector('.primary'); btn.disabled = true;
+  try {
+    await store.changePassword(oldS, neu);
+    $('#pwDlg').close();
+    alert(office ? 'Passwort geändert.' : 'PIN geändert.');
+  } catch (x) { err.textContent = x.message; }
+  finally { btn.disabled = false; }
+}
+
 // ================= Ereignisse =================
 function bindEvents() {
   document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
@@ -628,10 +662,12 @@ function bindEvents() {
   $('#showSetup').onclick = () => { $('#officeLogin').hidden = true; $('#officeSetup').hidden = false; };
   $('#hideSetup').onclick = () => setTab('office');
   $('#officeSetup').onsubmit = doSetup;
+  $('#pwForm').onsubmit = savePw;
 
   // Büro: Menü
   $('#side').onclick = e => {
     if (e.target.closest('#logoutBtn')) { store.logout(); return; }
+    if (e.target.closest('#pwBtn')) { openPwDlg(); return; }
     const b = e.target.closest('[data-view]');
     if (b) setView(b.dataset.view);
   };
@@ -689,6 +725,7 @@ function bindEvents() {
     const page = e.target.closest('[data-wpage]');
     if (page) { ui.wPage = page.dataset.wpage; renderWorker(); return; }
     if (e.target.closest('[data-act="logout"]')) store.logout();
+    if (e.target.closest('[data-act="pin"]')) openPwDlg();
   };
 
   // Formular

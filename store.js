@@ -5,6 +5,10 @@ import { firebaseConfig } from './firebase-config.js';
 export const OFFICE_EMAIL = 'buero@shk-planer.com';
 const WORKER_DOMAIN = 'mitarbeiter.shk-planer.com';
 const workerEmail = nr => `${nr}@${WORKER_DOMAIN}`;
+// Firebase verlangt mind. 6 Zeichen. Kürzere PINs (4–5 Ziffern) bekommen intern einen festen Zusatz.
+// PINs/Passwörter ab 6 Zeichen bleiben unverändert, damit bestehende Konten weiter funktionieren.
+const toPassword = s => s.length >= 6 ? s : s + '#shk-pin';
+export const MIN_SECRET = 4;
 const byNr = (a, b) => String(a.nr).localeCompare(String(b.nr), 'de', { numeric: true });
 
 export function createStore() {
@@ -42,7 +46,7 @@ function demoStore() {
     onSession(cb) { sessionCb = cb; cb(session); },
     async login(role, nr, secret) {
       if (role === 'office') {
-        if (secret !== 'buero') throw new Error('Falsches Passwort.');
+        if (secret !== (db.officePw || 'buero')) throw new Error('Falsches Passwort.');
         setSession({ role: 'office' });
       } else {
         const w = db.workers[nr];
@@ -51,6 +55,18 @@ function demoStore() {
       }
     },
     async logout() { setSession(null); },
+    async changePassword(oldSecret, newSecret) {
+      if (!session) throw new Error('Nicht angemeldet.');
+      if (session.role === 'office') {
+        if (oldSecret !== (db.officePw || 'buero')) throw new Error('Das bisherige Passwort stimmt nicht.');
+        db.officePw = newSecret;
+      } else {
+        const w = db.workers[session.nr];
+        if (!w || w.pin !== oldSecret) throw new Error('Die bisherige PIN stimmt nicht.');
+        w.pin = newSecret;
+      }
+      write();
+    },
     watchWorkers(cb) { return sub(() => cb(Object.values(db.workers).map(({ nr, name }) => ({ nr, name })).sort(byNr))); },
     watchWorker(nr, cb) { return sub(() => { const w = db.workers[nr]; cb(w ? { nr: w.nr, name: w.name } : null); }); },
     watchJobs(nr, cb) { return sub(() => cb(Object.values(db.jobs).filter(j => j.mitarbeiter === nr))); },
@@ -123,21 +139,37 @@ async function firebaseStore() {
     mode: 'firebase',
     onSession(cb) { A.onAuthStateChanged(auth, u => cb(toSession(u))); },
     async login(role, nr, secret) {
-      try { await A.signInWithEmailAndPassword(auth, role === 'office' ? OFFICE_EMAIL : workerEmail(nr), secret); }
+      try { await A.signInWithEmailAndPassword(auth, role === 'office' ? OFFICE_EMAIL : workerEmail(nr), toPassword(secret)); }
       catch (e) { throw authError(e); }
     },
     // Einmalig: Büro-Konto mit eigenem Passwort anlegen (danach ist man direkt angemeldet)
     async setupOffice(pw) {
-      try { await A.createUserWithEmailAndPassword(auth, OFFICE_EMAIL, pw); }
+      try { await A.createUserWithEmailAndPassword(auth, OFFICE_EMAIL, toPassword(pw)); }
       catch (e) {
         const c = e.code || '';
         if (c.includes('email-already-in-use')) throw new Error('Das Büro-Konto gibt es schon. Bitte normal anmelden.');
-        if (c.includes('weak-password')) throw new Error('Das Passwort muss mindestens 6 Zeichen haben.');
+        if (c.includes('weak-password')) throw new Error('Das Passwort muss mindestens 4 Zeichen haben.');
         if (c.includes('operation-not-allowed')) throw new Error('In Firebase ist "E-Mail-Adresse/Passwort" noch nicht aktiviert.');
         throw new Error('Büro-Konto konnte nicht angelegt werden.');
       }
     },
     logout: () => A.signOut(auth),
+    // Eigenes Passwort bzw. eigene PIN ändern (Firebase verlangt dafür die bisherige)
+    async changePassword(oldSecret, newSecret) {
+      const u = auth.currentUser;
+      if (!u) throw new Error('Nicht angemeldet.');
+      const isOffice = u.email === OFFICE_EMAIL;
+      try {
+        await A.reauthenticateWithCredential(u, A.EmailAuthProvider.credential(u.email, toPassword(oldSecret)));
+      } catch (e) {
+        const c = e.code || '';
+        if (c.includes('too-many-requests')) throw new Error('Zu viele Versuche. Bitte kurz warten.');
+        if (c.includes('network')) throw new Error('Keine Internetverbindung.');
+        throw new Error(isOffice ? 'Das bisherige Passwort stimmt nicht.' : 'Die bisherige PIN stimmt nicht.');
+      }
+      try { await A.updatePassword(u, toPassword(newSecret)); }
+      catch (e) { throw new Error('Ändern fehlgeschlagen. Bitte erneut versuchen.'); }
+    },
     watchWorkers(cb) {
       return list(F.collection(db, 'mitarbeiter'), ws => cb(ws.map(({ nr, name, uid }) => ({ nr, name, uid })).sort(byNr)));
     },
@@ -167,11 +199,11 @@ async function firebaseStore() {
       const tmpAuth = A.getAuth(tmp);
       let uid;
       try {
-        uid = (await A.createUserWithEmailAndPassword(tmpAuth, workerEmail(nr), pin)).user.uid;
+        uid = (await A.createUserWithEmailAndPassword(tmpAuth, workerEmail(nr), toPassword(pin))).user.uid;
       } catch (e) {
         const c = e.code || '';
         if (c.includes('email-already-in-use')) throw new Error('Für diese Nummer gibt es schon ein Konto. Lösche es in Firebase unter Authentication → Users.');
-        if (c.includes('weak-password')) throw new Error('Die PIN muss mindestens 6 Ziffern haben.');
+        if (c.includes('weak-password')) throw new Error('Die PIN muss mindestens 4 Ziffern haben.');
         throw new Error('Konto konnte nicht angelegt werden.');
       } finally {
         await A.signOut(tmpAuth).catch(() => {});

@@ -13,10 +13,22 @@
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link rel="alternate icon" href="icon-192.png">
 <title>SHK-Planer</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<meta name="robots" content="noindex, nofollow">
 <style>
+  /* Schriften liegen lokal im Ordner fonts/ (keine Verbindung zu Google) – Lizenz: SIL Open Font License */
+  @font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 500 700; font-display: swap;
+    src: url(fonts/montserrat-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+  @font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 500 700; font-display: swap;
+    src: url(fonts/montserrat-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family: 'Open Sans'; font-style: normal; font-weight: 400 700; font-display: swap;
+    src: url(fonts/opensans-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+  @font-face { font-family: 'Open Sans'; font-style: normal; font-weight: 400 700; font-display: swap;
+    src: url(fonts/opensans-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
   :root {
     --bg: #f4f6f9;
     --surface: #ffffff;
@@ -119,6 +131,9 @@
   .tabs button { border: 0; background: none; padding: 8px 0 10px; font-weight: 700; color: var(--muted); border-bottom: 3px solid transparent; }
   .tabs button[aria-selected="true"] { color: var(--blue); border-bottom-color: var(--blue); }
   .login-card form { display: grid; gap: 12px; }
+  .login-card .legal { text-align: center; font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .legal a { color: var(--muted); text-decoration: none; }
+  .legal a:hover { color: var(--blue); text-decoration: underline; }
 
   /* Büro: Grundlayout */
   .app { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
@@ -290,6 +305,7 @@
   /* Formular */
   .form-dlg { width: min(640px, 96vw); max-height: 92vh; overflow: auto; border-radius: 4px; }
   .fbody { padding: 22px 24px; display: grid; gap: 14px; }
+  .pw-dlg { width: min(420px, 96vw); }
   .fhead { display: flex; align-items: center; gap: 10px; }
   .fhead h2 { margin: 0; font-size: 18px; }
   .fsec { font-size: 15px; font-weight: 700; margin: 6px 0 -4px; }
@@ -357,14 +373,18 @@
     </form>
     <form id="officeSetup" hidden>
       <p>Lege einmalig das Passwort fest, mit dem sich das Büro anmeldet.</p>
-      <label class="field"><span>Neues Büro-Passwort (mind. 6 Zeichen)</span>
-        <input name="pw" type="password" autocomplete="new-password" minlength="6" required></label>
+      <label class="field"><span>Neues Büro-Passwort (mind. 4 Zeichen)</span>
+        <input name="pw" type="password" autocomplete="new-password" minlength="4" required></label>
       <label class="field"><span>Passwort wiederholen</span>
-        <input name="pw2" type="password" autocomplete="new-password" minlength="6" required></label>
+        <input name="pw2" type="password" autocomplete="new-password" minlength="4" required></label>
       <p class="err"></p>
       <button class="btn primary big">Festlegen und anmelden</button>
       <button type="button" class="link" id="hideSetup">Zurück zur Anmeldung</button>
     </form>
+    <p class="legal">
+      <a href="https://hwk-haustechnik.de/impressum" target="_blank" rel="noopener">Impressum</a> ·
+      <a href="https://hwk-haustechnik.de/datenschutz" target="_blank" rel="noopener">Datenschutz</a>
+    </p>
   </div>
 </div>
 
@@ -379,6 +399,7 @@
     <button class="nav" data-view="workers"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>Mitarbeiter</button>
     <div class="side-foot">
       <div class="me"><span class="av" style="background:#cfe3f7">BÜ</span>Büro</div>
+      <button class="nav" id="pwBtn"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/></svg>Passwort ändern</button>
       <button class="nav" id="logoutBtn"><svg viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>Abmelden</button>
     </div>
   </nav>
@@ -393,6 +414,24 @@
     <button data-wpage="konto"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>Konto</button>
   </nav>
 </div>
+
+<!-- Passwort / PIN ändern -->
+<dialog class="form-dlg pw-dlg" id="pwDlg">
+  <form class="fbody" id="pwForm">
+    <h2 id="pwTitle" style="margin:0">Passwort ändern</h2>
+    <label class="field"><span id="pwOldLabel">Bisheriges Passwort</span>
+      <input name="old" type="password" autocomplete="current-password" required></label>
+    <label class="field"><span id="pwNewLabel">Neues Passwort (mind. 4 Zeichen)</span>
+      <input name="neu" type="password" autocomplete="new-password" required></label>
+    <label class="field"><span>Wiederholen</span>
+      <input name="neu2" type="password" autocomplete="new-password" required></label>
+    <p class="err" id="pwErr"></p>
+    <div class="factions">
+      <button class="btn" type="button" data-close>Abbrechen</button>
+      <button class="btn primary">Ändern</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- Termin-Detail -->
 <dialog class="sheet" id="detailDlg"><div id="detailBody"></div></dialog>
