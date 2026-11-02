@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <clipPath id="links"><rect x="0" y="0" width="50" height="100"/></clipPath>
+    <clipPath id="rechts"><rect x="50" y="0" width="50" height="100"/></clipPath>
+  </defs>
+  <rect x="10" y="10" width="80" height="80" rx="22" fill="#ffffff"/>
+  <rect x="17" y="17" width="66" height="66" rx="16" fill="none" stroke="#1565c0" stroke-width="14" clip-path="url(#links)"/>
+  <rect x="17" y="17" width="66" height="66" rx="16" fill="none" stroke="#e31e24" stroke-width="14" clip-path="url(#rechts)"/>
+</svg>
