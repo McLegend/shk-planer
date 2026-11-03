@@ -390,7 +390,17 @@ function setView(v) {
     const f = $('#addAbsForm');
     f.elements.von.value = f.elements.bis.value = todayKey();
   }
+  noAutofill(c);
   refresh();
+}
+
+// Keine gespeicherten Browser-Vorschläge (alte Adressen, Namen …) in den Eingabefeldern.
+// „off“ allein ignoriert Chrome bei Adressfeldern, ein unbekannter Wert schaltet es zuverlässig ab.
+// Die eigene Kundenliste (datalist) beim Feld „Kunde“ bleibt erhalten.
+function noAutofill(root) {
+  [root, ...root.querySelectorAll('form')].filter(f => f.matches('form')).forEach(f => f.setAttribute('autocomplete', 'off'));
+  root.querySelectorAll('input:not([type=password]):not([type=checkbox]):not([type=date]):not([type=time]), textarea')
+    .forEach(el => el.setAttribute('autocomplete', 'shk-nofill'));
 }
 
 function refresh() {
@@ -1277,6 +1287,7 @@ async function savePw(e) {
 
 // ================= Ereignisse =================
 function bindEvents() {
+  noAutofill($('#jobForm'));
   document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
   $('#workerLogin').onsubmit = e => { e.preventDefault(); doLogin(e.target, 'worker', e.target.elements.nr.value.trim(), e.target.elements.pin.value.trim()); };
   $('#officeLogin').onsubmit = e => { e.preventDefault(); doLogin(e.target, 'office', null, e.target.elements.pw.value); };
