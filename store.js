@@ -29,6 +29,7 @@ function demoStore() {
   const emit = () => listeners.forEach(f => f());
   const write = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} emit(); };
   if (!db || !db.workers) { db = seed(); write(); }
+  if (!db.absences) db.absences = {};
   // Änderungen aus anderen Tabs übernehmen
   addEventListener('storage', e => { if (e.key === KEY) { db = read() || db; emit(); } });
   const sub = f => { listeners.add(f); f(); return () => listeners.delete(f); };
@@ -82,29 +83,41 @@ function demoStore() {
       db.workers[nr] = { nr, name, pin }; write();
     },
     async deleteWorker(nr) { delete db.workers[nr]; write(); },
+    watchAbsences(cb) { return sub(() => cb(Object.values(db.absences))); },
+    async addAbsence(a) {
+      const id = 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      db.absences[id] = { ...a, id }; write();
+    },
+    async deleteAbsence(id) { delete db.absences[id]; write(); },
   };
 }
 
 // Beispieldaten für den Demo-Modus
 function seed() {
   const d = n => { const x = new Date(); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
-  const job = (id, nr, tag, von, bis, kunde, auftrag, strasse, plz, ort, telefon = '', notiz = '') =>
-    [id, { id, mitarbeiter: nr, datum: d(tag), von, kunde, auftrag, strasse, plz, ort, telefon, notiz, status: 'offen', fertigAm: null }];
+  const job = (id, nr, tag, von, dauer, kunde, auftrag, strasse, plz, ort, telefon = '', notiz = '') =>
+    [id, { id, mitarbeiter: nr, datum: d(tag), von, dauer: dauer || null, kunde, auftrag, strasse, plz, ort, telefon, notiz, status: 'offen', fertigAm: null }];
   return {
+    absences: { a1: { id: 'a1', mitarbeiter: '103', art: 'urlaub', von: d(0), bis: d(0) } },
     workers: {
       '101': { nr: '101', name: 'Max Muster', pin: '123456' },
       '102': { nr: '102', name: 'Lisa Beispiel', pin: '654321' },
       '103': { nr: '103', name: 'Rainer Bauer', pin: '111111' },
     },
     jobs: Object.fromEntries([
-      job('d1', '101', 0, '08:00', '09:30', 'Familie Schneider', 'Heizungswartung', 'Musterstraße 12', '79539', 'Lörrach', '07621 000000', 'Schlüssel beim Nachbarn'),
-      job('d2', '101', 0, '10:30', '12:00', 'Bäckerei Krüger', 'Wasserhahn tropft', 'Beispielweg 3', '79540', 'Lörrach'),
-      job('d3', '101', 0, '13:30', '15:00', 'Herr Wagner', 'Therme zeigt Störung F28', 'Am Testplatz 7', '79576', 'Weil am Rhein'),
-      job('d4', '101', 1, '09:00', '11:00', 'Praxis Dr. Klein', 'Klimaanlage prüfen', 'Hauptstraße 100', '79618', 'Rheinfelden'),
-      job('d5', '102', 0, '08:30', '10:00', 'Frau Hoffmann', 'Badsanierung Aufmaß', 'Lindenallee 5', '79539', 'Lörrach'),
-      job('d6', '102', 0, '13:00', '', 'Autohaus Berger', 'Heizkörper tauschen', 'Gewerbestraße 8', '79576', 'Weil am Rhein'),
-      job('d7', '101', -1, '15:00', '', 'Familie Roth', 'Spülkasten defekt', 'Rosenweg 2', '79539', 'Lörrach'),
-      job('d8', '103', 1, '07:30', '', 'Schule am Park', 'Wartung Lüftungsanlage', 'Parkstraße 20', '79540', 'Lörrach'),
+      job('d1', '101', 0, '08:00', 90, 'Familie Schneider', 'Heizungswartung', 'Musterstraße 12', '79539', 'Lörrach', '07621 000000', 'Schlüssel beim Nachbarn'),
+      job('d2', '101', 0, '10:30', 60, 'Bäckerei Krüger', 'Wasserhahn tropft', 'Beispielweg 3', '79540', 'Lörrach'),
+      job('d3', '101', 0, '13:30', 120, 'Herr Wagner', 'Therme zeigt Störung F28', 'Am Testplatz 7', '79576', 'Weil am Rhein'),
+      job('d4', '101', 1, '09:00', 120, 'Praxis Dr. Klein', 'Klimaanlage prüfen', 'Hauptstraße 100', '79618', 'Rheinfelden'),
+      job('d5', '102', 0, '08:30', 90, 'Frau Hoffmann', 'Badsanierung Aufmaß', 'Lindenallee 5', '79539', 'Lörrach'),
+      job('d6', '102', 0, '13:00', 240, 'Autohaus Berger', 'Heizkörper tauschen', 'Gewerbestraße 8', '79576', 'Weil am Rhein'),
+      job('d7', '101', -1, '15:00', 0, 'Familie Roth', 'Spülkasten defekt', 'Rosenweg 2', '79539', 'Lörrach'),
+      job('d8', '103', 1, '07:30', 180, 'Schule am Park', 'Wartung Lüftungsanlage', 'Parkstraße 20', '79540', 'Lörrach'),
+      // Team-Auftrag: zwei Monteure, verknüpft über „gruppe“
+      ...['101', '102'].map((nr, i) => {
+        const [id, j] = job('d9' + i, nr, 1, '13:00', 240, 'Familie Weber', 'Heizungstausch', 'Gartenweg 4', '79539', 'Lörrach');
+        return [id, { ...j, gruppe: 'gdemo', team: [{ nr: '101', name: 'Max Muster' }, { nr: '102', name: 'Lisa Beispiel' }] }];
+      }),
     ]),
   };
 }
@@ -118,7 +131,20 @@ async function firebaseStore() {
 
   const app = initializeApp(firebaseConfig);
   const auth = A.getAuth(app);
-  const db = F.getFirestore(app);
+  // Offline-Modus: Daten werden auf dem Gerät zwischengespeichert, Änderungen ohne Netz später übertragen
+  let db;
+  try {
+    db = F.initializeFirestore(app, { localCache: F.persistentLocalCache({ tabManager: F.persistentMultipleTabManager() }) });
+  } catch (e) {
+    console.warn('Offline-Speicher nicht verfügbar', e);
+    db = F.getFirestore(app);
+  }
+  // Schreibvorgänge warten ohne Netz, bis wieder Empfang da ist. Die App soll so lange nicht hängen:
+  // Die Änderung ist sofort lokal sichtbar und wird im Hintergrund übertragen.
+  const queued = p => {
+    p.catch(e => console.error('Änderung abgelehnt', e));
+    return Promise.race([p, new Promise(r => setTimeout(r, navigator.onLine ? 4000 : 300))]);
+  };
 
   const toSession = u => !u ? null
     : u.email === OFFICE_EMAIL ? { role: 'office' }
@@ -188,9 +214,13 @@ async function firebaseStore() {
         : F.where('mitarbeiter', '==', nr);
       return list(F.query(F.collection(db, 'auftraege'), filter), cb);
     },
-    addJob: job => F.addDoc(F.collection(db, 'auftraege'), job),
-    updateJob: (id, data) => F.updateDoc(F.doc(db, 'auftraege', id), data),
-    deleteJob: id => F.deleteDoc(F.doc(db, 'auftraege', id)),
+    addJob: job => queued(F.addDoc(F.collection(db, 'auftraege'), job)),
+    updateJob: (id, data) => queued(F.updateDoc(F.doc(db, 'auftraege', id), data)),
+    deleteJob: id => queued(F.deleteDoc(F.doc(db, 'auftraege', id))),
+    // Urlaub / Krank (nur Büro)
+    watchAbsences(cb) { return list(F.collection(db, 'abwesenheiten'), cb); },
+    addAbsence: a => queued(F.addDoc(F.collection(db, 'abwesenheiten'), a)),
+    deleteAbsence: id => queued(F.deleteDoc(F.doc(db, 'abwesenheiten', id))),
     async addWorker(nr, name, pin) {
       const ref = F.doc(db, 'mitarbeiter', nr);
       if ((await F.getDoc(ref)).exists()) throw new Error('Diese Nummer gibt es schon.');

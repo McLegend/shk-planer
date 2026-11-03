@@ -45,7 +45,15 @@ const finishedAt = j => j.status === 'fertig' && j.fertigAm ? new Date(j.fertigA
 const endMin = j => { const f = finishedAt(j); return f && ymd(f) === j.datum ? f.getHours() * 60 + f.getMinutes() : null; };
 const stateOf = j => j.status === 'fertig' ? 'erledigt' : j.datum < todayKey() ? 'ueberfaellig' : 'geplant';
 const STATE_LABEL = { geplant: 'Geplant', ueberfaellig: 'Überfällig', erledigt: 'Erledigt' };
-const badge = j => { const s = stateOf(j); return `<span class="badge ${s}">${STATE_LABEL[s]}</span>`; };
+// Monteur hat „Angekommen“ gedrückt, ist aber noch nicht fertig
+const onSite = j => j.status !== 'fertig' && !!j.angekommenAm;
+const cardState = j => onSite(j) ? 'vorort' : stateOf(j);
+const badge = j => onSite(j) ? '<span class="badge vorort">Vor Ort</span>' : (s => `<span class="badge ${s}">${STATE_LABEL[s]}</span>`)(stateOf(j));
+const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const arrivedAt = j => j.angekommenAm ? new Date(j.angekommenAm) : null;
+// Ende in der Plantafel: echte Fertig-Zeit, sonst Beginn + geplante Dauer (ohne Angabe 1 Std.)
+const planEnd = j => endMin(j) ?? toMin(j.von) + (Number(j.dauer) || 60);
+const dauerText = m => m ? `ca. ${duration(Number(m))}` : '';
 const shortDate = k => parseYmd(k).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
 const timeRange = j => { const e = endMin(j); return e !== null && e > toMin(j.von) ? `${j.von} – ${fromMin(e)}` : j.von; };
 const whenText = j => { const e = endMin(j); return `${shortDate(j.datum)} ${j.von}${e !== null && e > toMin(j.von) ? ' → ' + fromMin(e) : ''}`; };
@@ -72,11 +80,23 @@ const avatar = (nr, name, cls = '') => {
 };
 const workerName = nr => ui.workers.find(w => w.nr === nr)?.name || `Nr. ${nr}`;
 
+// ---- Team-Aufträge: ein Auftrag je Monteur, verknüpft über „gruppe“ ----
+const groupOf = j => j.gruppe ? ui.jobs.filter(x => x.gruppe === j.gruppe) : [j];
+const teamOf = nrs => nrs.map(nr => ({ nr, name: workerName(nr) }));
+const teamSize = j => Array.isArray(j.team) ? j.team.length : 1;
+const others = j => (Array.isArray(j.team) ? j.team : []).filter(t => t.nr !== j.mitarbeiter).map(t => t.name);
+const newGroupId = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+// ---- Urlaub / Krank ----
+const ABS_LABEL = { urlaub: 'Urlaub', krank: 'Krank' };
+const absenceOf = (nr, k) => ui.absences.find(a => a.mitarbeiter === nr && a.von <= k && k <= a.bis);
+const absTag = a => `<span class="abs-tag ${esc(a.art)}">${ABS_LABEL[a.art] || 'Abwesend'}</span>`;
+
 // Überlappende Termine auf Spuren verteilen
 function layoutLanes(list) {
   const items = list.map(j => {
-    const s = toMin(j.von), end = endMin(j);
-    return { j, s, e: end !== null ? Math.max(end, s + 15) : s + 60, lane: 0, lanes: 1 };
+    const s = toMin(j.von);
+    return { j, s, e: Math.max(planEnd(j), s + 15), lane: 0, lanes: 1 };
   }).sort((x, y) => x.s - y.s || y.e - x.e);
   let cluster = [], clusterEnd = -1;
   const finish = () => {
@@ -98,7 +118,7 @@ function layoutLanes(list) {
 
 // ================= Zustand =================
 const ui = {
-  session: null, workers: [], jobs: [], me: null, unsub: [],
+  session: null, workers: [], jobs: [], absences: [], me: null, unsub: [], drag: null, suppressClick: false,
   view: 'plan', mode: 'day', day: todayKey(), filter: '',
   listStatus: 'alle', listPast: false, search: '',
   wPage: 'termine', wTab: 'geplant',
@@ -117,6 +137,11 @@ async function init() {
     return;
   }
   $('#demoBanner').hidden = store.mode !== 'demo';
+  // Offline-Hinweis
+  const net = () => { $('#offlineBanner').hidden = navigator.onLine; };
+  addEventListener('online', net); addEventListener('offline', net); net();
+  // App-Dateien fürs Starten ohne Netz zwischenspeichern
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(e => console.warn(e));
   bindEvents();
   store.onSession(s => {
     ui.session = s;
@@ -131,7 +156,7 @@ function stopWatching() { ui.unsub.forEach(f => f && f()); ui.unsub = []; }
 // ================= Anmeldung =================
 function showLogin() {
   stopWatching();
-  ui.jobs = []; ui.workers = [];
+  ui.jobs = []; ui.workers = []; ui.absences = [];
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#appView').hidden = true;
   $('#workerView').hidden = true;
@@ -173,6 +198,7 @@ function enterOffice() {
   ui.day = todayKey();
   ui.mode = lsGet('shk-mode') || 'day';
   ui.unsub.push(store.watchWorkers(ws => { ui.workers = ws; refresh(); }));
+  ui.unsub.push(store.watchAbsences(as => { ui.absences = as.sort((a, b) => a.von.localeCompare(b.von)); refresh(); }));
   ui.unsub.push(store.watchAllJobs(js => {
     ui.jobs = sortJobs(js);
     refresh();
@@ -236,7 +262,23 @@ function setView(v) {
       </div>
       <div class="table-wrap"><table class="tbl">
         <thead><tr><th>Mitarbeiter</th><th>Nummer</th><th>Offene Aufträge</th><th></th></tr></thead>
-        <tbody id="workersBody"></tbody></table></div>`;
+        <tbody id="workersBody"></tbody></table></div>
+      <div class="card" style="margin-top:16px">
+        <h2>Urlaub / Krank eintragen</h2>
+        <form id="addAbsForm" class="add-abs">
+          <label class="field wide"><span>Mitarbeiter</span><select name="mitarbeiter" id="absWorker" required></select></label>
+          <label class="field"><span>Art</span><select name="art"><option value="urlaub">Urlaub</option><option value="krank">Krank</option></select></label>
+          <label class="field"><span>Von</span><input name="von" type="date" required></label>
+          <label class="field"><span>Bis</span><input name="bis" type="date" required></label>
+          <button class="btn primary">${icon('add')}Eintragen</button>
+        </form>
+        <p class="err" id="absErr" style="margin-top:8px"></p>
+      </div>
+      <div class="table-wrap"><table class="tbl">
+        <thead><tr><th>Mitarbeiter</th><th>Art</th><th>Zeitraum</th><th></th></tr></thead>
+        <tbody id="absBody"></tbody></table></div>`;
+    const f = $('#addAbsForm');
+    f.elements.von.value = f.elements.bis.value = todayKey();
   }
   refresh();
 }
@@ -294,6 +336,8 @@ function renderPlan() {
     const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes();
     const target = ui.day === todayKey() ? nowMin - 90 : 7 * 60;
     pt.scrollLeft = Math.max(0, (target - ui.plan.start * 60) / 60 * ui.plan.hw);
+  } else if (ui.scrollPlan) {
+    ui.scrollPlan = false; // Wochenansicht: am Anfang der Woche beginnen
   } else if (prevScroll) {
     pt.scrollLeft = prevScroll.x; pt.scrollTop = prevScroll.y;
   }
@@ -305,7 +349,7 @@ function planDay() {
   let start = 6, end = 20;
   for (const j of dayJobs) {
     start = Math.min(start, Math.floor(toMin(j.von) / 60));
-    end = Math.max(end, Math.ceil(Math.max(endMin(j) ?? 0, toMin(j.von) + 60) / 60));
+    end = Math.max(end, Math.ceil(planEnd(j) / 60));
   }
   end = Math.min(end, 24);
   const whoW = narrow.matches ? 64 : 150;
@@ -328,15 +372,17 @@ function planDay() {
       const j = it.j;
       const left = (it.s - start * 60) / 60 * hw + 2;
       const width = Math.max((it.e - it.s) / 60 * hw - 4, 64);
-      return `<button class="pc st-${stateOf(j)}" data-id="${esc(j.id)}" style="left:${left}px;top:${6 + it.lane * 62}px;width:${width}px;height:56px">
+      return `<button class="pc st-${cardState(j)}" data-id="${esc(j.id)}" style="left:${left}px;top:${6 + it.lane * 62}px;width:${width}px;height:56px">
         <span class="pc-t">${esc(titleOf(j))}</span>
-        <span class="pc-s">${esc(timeRange(j))}${j.auftrag ? ' · ' + esc(j.kunde) : ''}</span>
+        <span class="pc-s">${teamSize(j) > 1 ? `👥${teamSize(j)} · ` : ''}${esc(timeRange(j))}${j.auftrag ? ' · ' + esc(j.kunde) : ''}</span>
         <span class="pc-s">${esc([j.plz, j.ort].filter(Boolean).join(' '))}</span>
         <span class="dot"></span></button>`;
     }).join('');
+    const abs = absenceOf(r.nr, k);
+    const band = abs ? `<div class="abs-band ${esc(abs.art)}"><span>${ABS_LABEL[abs.art] || 'Abwesend'}</span></div>` : '';
     return `<div class="pt-row">
       <div class="pt-who">${avatar(r.nr, r.name)}<span class="nm">${esc(r.name)}</span></div>
-      <div class="pt-lane" data-nr="${esc(r.nr)}" data-day="${k}" style="width:${W}px;height:${H}px;--hw:${hw}px">${cards}${nowLine}</div>
+      <div class="pt-lane" data-nr="${esc(r.nr)}" data-day="${k}" style="width:${W}px;height:${H}px;--hw:${hw}px">${band}${cards}${nowLine}</div>
     </div>`;
   }).join('');
 
@@ -355,10 +401,10 @@ function planWeek() {
     `<div class="wk-d ${ymd(d) === t ? 'today' : ''}">${d.toLocaleDateString('de-DE', { weekday: 'short' })}<b>${d.getDate()}.${d.getMonth() + 1}.</b></div>`).join('')}</div>`;
   const rows = planRows(keys).map(r => `<div class="wk-grid">
       <div class="pt-who">${avatar(r.nr, r.name)}<span class="nm">${esc(r.name)}</span></div>
-      ${keys.map(k => `<div class="wk-cell" data-nr="${esc(r.nr)}" data-day="${k}">${ui.jobs
+      ${keys.map(k => { const abs = absenceOf(r.nr, k); return `<div class="wk-cell ${abs ? 'abs' : ''}" data-nr="${esc(r.nr)}" data-day="${k}">${abs ? absTag(abs) : ''}${ui.jobs
         .filter(j => j.datum === k && j.mitarbeiter === r.nr)
-        .map(j => `<button class="mini st-${stateOf(j)}" data-id="${esc(j.id)}" title="${esc(titleOf(j))}"><b>${esc(j.von)}</b>${esc(titleOf(j))}</button>`)
-        .join('')}</div>`).join('')}
+        .map(j => `<button class="mini st-${cardState(j)}" data-id="${esc(j.id)}" title="${esc(titleOf(j))}"><b>${esc(j.von)}</b>${esc(titleOf(j))}</button>`)
+        .join('')}</div>`; }).join('')}
     </div>`).join('');
   return `<div class="pt" id="ptScroll">${head}${rows}</div>`;
 }
@@ -395,6 +441,35 @@ function renderWorkersPage() {
     return `<tr><td><span class="who-cell">${avatar(w.nr, w.name)}${esc(w.name)}</span></td><td class="b">${esc(w.nr)}</td>
       <td>${open}</td><td style="text-align:right"><button class="btn danger" data-del-worker="${esc(w.nr)}">Entfernen</button></td></tr>`;
   }).join('') : '<tr><td colspan="4" class="sub" style="text-align:center;padding:30px">Noch keine Mitarbeiter angelegt.</td></tr>';
+
+  // Urlaub / Krank: Auswahl und Liste (ab heute)
+  const sel = $('#absWorker');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">Auswählen …</option>' + ui.workers.map(w => `<option value="${esc(w.nr)}">${esc(w.name)} (${esc(w.nr)})</option>`).join('');
+  sel.value = keep;
+  const t = todayKey();
+  const list = ui.absences.filter(a => a.bis >= t);
+  const fmt = k => parseYmd(k).toLocaleDateString('de-DE');
+  $('#absBody').innerHTML = list.length ? list.map(a => `<tr>
+      <td><span class="who-cell">${avatar(a.mitarbeiter, workerName(a.mitarbeiter))}${esc(workerName(a.mitarbeiter))}</span></td>
+      <td>${absTag(a)}</td>
+      <td class="b">${a.von === a.bis ? fmt(a.von) : `${fmt(a.von)} – ${fmt(a.bis)}`}</td>
+      <td style="text-align:right"><button class="btn danger" data-del-abs="${esc(a.id)}">Löschen</button></td></tr>`).join('')
+    : '<tr><td colspan="4" class="sub" style="text-align:center;padding:24px">Kein Urlaub und keine Krankmeldung eingetragen.</td></tr>';
+}
+
+async function addAbsence(e) {
+  const f = e.target, err = $('#absErr');
+  const a = { mitarbeiter: f.elements.mitarbeiter.value, art: f.elements.art.value, von: f.elements.von.value, bis: f.elements.bis.value };
+  err.textContent = '';
+  if (!a.mitarbeiter) { err.textContent = 'Bitte einen Mitarbeiter auswählen.'; return; }
+  if (a.bis < a.von) { err.textContent = '„Bis“ liegt vor „Von“.'; return; }
+  const open = ui.jobs.filter(j => j.mitarbeiter === a.mitarbeiter && j.status !== 'fertig' && a.von <= j.datum && j.datum <= a.bis);
+  if (open.length && !confirm(`${workerName(a.mitarbeiter)} hat in diesem Zeitraum ${open.length} offene${open.length === 1 ? 'n Auftrag' : ' Aufträge'}. Trotzdem eintragen? Die Aufträge bleiben bestehen und müssen ggf. verschoben werden.`)) return;
+  const btn = f.querySelector('.primary'); btn.disabled = true;
+  try { await store.addAbsence(a); f.elements.mitarbeiter.value = ''; }
+  catch (x) { err.textContent = 'Speichern fehlgeschlagen.'; }
+  finally { btn.disabled = false; }
 }
 
 async function addWorker(e) {
@@ -476,6 +551,7 @@ function renderWorker() {
         <span class="t">${esc(titleOf(j))}</span>
         ${j.auftrag ? `<span class="k">${esc(j.kunde)}</span>` : ''}
         ${address(j) ? `<span class="a">${esc(address(j))}</span>` : ''}
+        ${others(j).length ? `<span class="a">👥 mit ${esc(others(j).join(', '))}</span>` : ''}
       </button>`).join('')}`).join('') : `<div class="w-empty">${empty}</div>`}`;
   c.scrollTop = prevScroll;
   void t;
@@ -494,17 +570,28 @@ function renderDetail() {
   const office = ui.session.role === 'office';
   const done = j.status === 'fertig';
   const hasAddr = !!address(j);
-  const e = endMin(j), f = finishedAt(j);
+  const f = finishedAt(j), a = arrivedAt(j);
 
-  let work;
-  if (done && e !== null && e > toMin(j.von)) {
-    work = `<div class="row">${icon('clock')}<div>${esc(j.von)} – ${fromMin(e)}<br><span class="hint">${esc(dayLabel(j.datum))}</span></div><span class="r">${duration(e - toMin(j.von))}</span></div>`;
-  } else if (done && f) {
-    work = `<div class="row">${icon('clock')}<div>Fertig gemeldet am ${f.toLocaleDateString('de-DE')} um ${pad(f.getHours())}:${pad(f.getMinutes())} Uhr</div></div>`;
-  } else {
-    work = `<div class="row">${icon('clock')}<div>Beginn ${esc(j.von)} Uhr<br><span class="hint">${esc(dayLabel(j.datum))}</span></div></div>
-      <div class="info">${icon('info')}<span>Die Endzeit wird automatisch eingetragen, sobald „Fertig“ gedrückt wird. Erst nach Abschluss der Arbeiten drücken.</span></div>`;
+  // Arbeitszeit: geplant → angekommen → fertig
+  const fmtTime = d => d.toDateString() === parseYmd(j.datum).toDateString() ? `${hm(d)} Uhr` : `${d.toLocaleDateString('de-DE')} ${hm(d)} Uhr`;
+  let work = `<div class="row">${icon('cal')}<div>Geplant ${esc(j.von)} Uhr${j.dauer ? ` · ${esc(dauerText(j.dauer))}` : ''}<br><span class="hint">${esc(dayLabel(j.datum))}</span></div></div>`;
+  if (a) work += `<div class="row">${icon('place')}<div>Angekommen ${fmtTime(a)}</div></div>`;
+  if (done && f) {
+    const from = a || new Date(`${j.datum}T${j.von}`);
+    const mins = Math.round((f - from) / 60000);
+    work += `<div class="row">${icon('clock')}<div>Fertig ${fmtTime(f)}</div>${mins > 0 && mins < 24 * 60 ? `<span class="r">${duration(mins)}${a ? '' : ' ab Plan'}</span>` : ''}</div>`;
+  } else if (!office) {
+    work += `<div class="info">${icon('info')}<span>${a ? 'Erst nach Abschluss der Arbeiten „Fertig“ drücken – die Uhrzeit wird automatisch eingetragen.' : 'Beim Kunden „Angekommen“ drücken, nach Abschluss „Fertig“. Die Uhrzeiten werden automatisch eingetragen.'}</span></div>`;
   }
+
+  // Arbeitsbericht: dezent zum Aufklappen
+  const rep = j.bericht || '';
+  const report = office
+    ? (rep ? `<div class="sec"><div class="sec-head"><p class="sec-title">Bericht</p></div><div class="row">${icon('notes')}<div>${esc(rep)}</div></div></div>` : '')
+    : `<details class="report" ${rep ? 'open' : ''}><summary>Arbeitsbericht${rep ? '' : ' (optional)'}</summary>
+        <textarea id="reportText" maxlength="2000" placeholder="Was wurde gemacht? Verbrauchtes Material …">${esc(rep)}</textarea>
+        <div style="margin-top:6px"><button class="btn" id="saveReport" type="button">Bericht speichern</button><span class="saved" id="reportSaved"></span></div>
+      </details>`;
 
   // Karte nur laden, wenn sich die Adresse geändert hat (sonst flackert sie bei Live-Updates)
   const oldFrame = $('#detailBody iframe');
@@ -526,33 +613,59 @@ function renderDetail() {
         ${hasAddr ? `<div class="row">${icon('place')}<div>${esc(address(j))}</div></div>
           <div class="row">${icon('map')}<div><a href="${esc(googleMaps(j))}" target="_blank" rel="noopener">Google Maps</a> &nbsp;·&nbsp; <a href="${esc(appleMaps(j))}" target="_blank" rel="noopener">Apple Karten</a></div></div>` : ''}
         ${j.telefon ? `<div class="row">${icon('phone')}<div><a href="tel:${esc(j.telefon.replace(/[^\d+]/g, ''))}">${esc(j.telefon)}</a></div></div>` : ''}
-        ${office ? `<div class="row">${avatar(j.mitarbeiter, workerName(j.mitarbeiter))}<div>${esc(workerName(j.mitarbeiter))}</div></div>` : ''}
+        ${office ? `<div class="row">${avatar(j.mitarbeiter, workerName(j.mitarbeiter))}<div>${esc(workerName(j.mitarbeiter))}${others(j).length ? `<br><span class="hint">Team mit ${esc(others(j).join(', '))}</span>` : ''}</div></div>`
+          : others(j).length ? `<div class="row">${icon('person')}<div>Zusammen mit ${esc(others(j).join(', '))}</div></div>` : ''}
         ${j.notiz ? `<div class="row">${icon('notes')}<div>${esc(j.notiz)}</div></div>` : ''}
       </div>
       <div class="sec">
         <div class="sec-head"><p class="sec-title">Arbeitszeit</p></div>
         ${work}
       </div>
+      ${report}
+      ${!done && !a && !office ? '<button class="btn big outline" id="arrived">Angekommen</button>' : ''}
       <button class="btn big ${done ? '' : 'green'}" id="toggleDone">${done ? 'Wieder auf offen setzen' : '✓ Fertig'}</button>
       ${office ? `<div class="sh-actions"><button class="btn danger" id="deleteJob">Löschen</button><button class="btn" id="editJob">Bearbeiten</button></div>` : ''}
     </div>`;
   if (keepFrame) $('#frameSlot').replaceWith(oldFrame);
 
-  $('#toggleDone').onclick = async () => {
-    $('#toggleDone').disabled = true;
-    try {
-      await store.updateJob(j.id, done ? { status: 'offen', fertigAm: null } : { status: 'fertig', fertigAm: new Date().toISOString() });
-    } catch (x) {
-      alert('Speichern fehlgeschlagen. Bitte Internetverbindung prüfen.');
-      $('#toggleDone').disabled = false;
-    }
+  // Änderungen werden sofort angezeigt; ohne Netz überträgt Firebase sie später automatisch
+  const save = async (data, btn) => {
+    if (btn) btn.disabled = true;
+    try { await store.updateJob(j.id, data); }
+    catch (x) { alert('Speichern fehlgeschlagen. Bitte erneut versuchen.'); if (btn) btn.disabled = false; }
+  };
+  const reportVal = () => $('#reportText') ? $('#reportText').value.trim() : null;
+  $('#toggleDone').onclick = () => {
+    if (done) return save({ status: 'offen', fertigAm: null }, $('#toggleDone'));
+    const data = { status: 'fertig', fertigAm: new Date().toISOString() };
+    const r = reportVal();
+    if (r !== null && r !== rep) data.bericht = r;
+    save(data, $('#toggleDone'));
+  };
+  if ($('#arrived')) $('#arrived').onclick = () => save({ angekommenAm: new Date().toISOString() }, $('#arrived'));
+  if ($('#saveReport')) $('#saveReport').onclick = async () => {
+    await save({ bericht: reportVal() }, null);
+    $('#reportSaved').textContent = navigator.onLine ? '✓ gespeichert' : '✓ wird übertragen';
   };
   if (office) {
     $('#editJob').onclick = () => { $('#detailDlg').close(); openForm(j); };
     $('#deleteJob').onclick = async () => {
-      if (!confirm(`Auftrag „${titleOf(j)}“ wirklich löschen?`)) return;
-      await store.deleteJob(j.id);
+      const group = groupOf(j);
+      let ids;
+      if (group.length > 1) {
+        if (confirm(`Auftrag „${titleOf(j)}“ für alle ${group.length} Monteure löschen?\n\n(Abbrechen = nur für ${workerName(j.mitarbeiter)} löschen)`)) ids = group.map(g => g.id);
+        else if (confirm(`Nur für ${workerName(j.mitarbeiter)} löschen?`)) ids = [j.id];
+        else return;
+      } else {
+        if (!confirm(`Auftrag „${titleOf(j)}“ wirklich löschen?`)) return;
+        ids = [j.id];
+      }
       $('#detailDlg').close();
+      const rest = group.filter(g => !ids.includes(g.id));
+      await Promise.all([
+        ...ids.map(id => store.deleteJob(id)),
+        ...rest.map(g => store.updateJob(g.id, { team: rest.length > 1 ? teamOf(rest.map(r => r.mitarbeiter)) : null })),
+      ]);
     };
   }
 }
@@ -565,14 +678,26 @@ function openForm(job, preset = {}) {
   ui.editId = job ? job.id : null;
   $('#formTitle').textContent = job ? 'Auftrag bearbeiten' : 'Neuer Auftrag';
   $('#formBadge').innerHTML = job ? badge(job) : '<span class="badge">Geplant</span>';
-  const opts = ui.workers.map(w => ({ nr: w.nr, name: w.name }));
   const curNr = job ? job.mitarbeiter : preset.nr || ui.filter || '';
-  if (curNr && !opts.some(o => o.nr === curNr)) opts.push({ nr: curNr, name: `Nr. ${curNr}` });
-  f.elements.mitarbeiter.innerHTML = '<option value="">Monteur auswählen …</option>' +
-    opts.map(o => `<option value="${esc(o.nr)}">${esc(o.name)} (${esc(o.nr)})</option>`).join('');
-  f.elements.mitarbeiter.value = curNr;
+  // Team: der bearbeitete Monteur zuerst, dann die übrigen
+  const team = job ? [curNr, ...groupOf(job).map(g => g.mitarbeiter).filter(nr => nr !== curNr)] : [curNr];
+  const opts = ui.workers.map(w => ({ nr: w.nr, name: w.name }));
+  for (const nr of team) if (nr && !opts.some(o => o.nr === nr)) opts.push({ nr, name: `Nr. ${nr}` });
+  const optHtml = opts.map(o => `<option value="${esc(o.nr)}">${esc(o.name)} (${esc(o.nr)})</option>`).join('');
+  ['mitarbeiter', 'mitarbeiter2', 'mitarbeiter3'].forEach((n, i) => {
+    f.elements[n].innerHTML = (i ? '<option value="">– keiner –</option>' : '<option value="">Monteur auswählen …</option>') + optHtml;
+    f.elements[n].value = team[i] || '';
+  });
+  $('#m2wrap').hidden = !team[1];
+  $('#m3wrap').hidden = !team[2];
+  $('#addTeam').hidden = !!team[2];
   const data = job || { datum: preset.day || ui.day, von: preset.time || '08:00' };
   for (const k of ['kunde', 'auftrag', 'datum', 'telefon', 'von', 'strasse', 'plz', 'ort', 'notiz']) f.elements[k].value = data[k] || '';
+  f.elements.dauer.value = data.dauer ? String(data.dauer) : '';
+  if (f.elements.dauer.value === '' && data.dauer) { // ungewöhnlicher Wert: als Option ergänzen
+    f.elements.dauer.insertAdjacentHTML('beforeend', `<option value="${Number(data.dauer)}">${duration(Number(data.dauer))}</option>`);
+    f.elements.dauer.value = String(data.dauer);
+  }
   checkConflict();
   $('#formDlg').showModal();
   if (!job) (curNr ? f.elements.kunde : f.elements.mitarbeiter).focus();
@@ -581,34 +706,91 @@ function openForm(job, preset = {}) {
 // Warnung, wenn der Monteur zur selben Zeit schon einen offenen Auftrag hat
 function checkConflict() {
   const f = $('#jobForm');
-  const nr = f.elements.mitarbeiter.value, datum = f.elements.datum.value, von = f.elements.von.value;
-  const hit = nr && datum && von && ui.jobs.find(j => j.id !== ui.editId && j.mitarbeiter === nr && j.datum === datum
-    && j.status !== 'fertig' && Math.abs(toMin(j.von) - toMin(von)) < 60);
-  $('#conflict').textContent = hit ? `Terminkonflikt: ${hit.von} Uhr „${titleOf(hit)}“` : '';
+  const datum = f.elements.datum.value, von = f.elements.von.value, dauer = Number(f.elements.dauer.value) || 60;
+  const nrs = formTeam();
+  const own = ui.editId ? groupOf(ui.jobs.find(j => j.id === ui.editId) || {}).map(g => g.id) : [];
+  let msg = nrs.length < [f.elements.mitarbeiter, f.elements.mitarbeiter2, f.elements.mitarbeiter3].filter(s => s.value).length
+    ? 'Ein Monteur ist doppelt ausgewählt.' : '';
+  for (const nr of nrs) {
+    if (msg) break;
+    const id = ui.jobs.find(j => own.includes(j.id) && j.mitarbeiter === nr)?.id || ui.editId;
+    const t = conflictText(id, nr, datum, von, dauer);
+    if (t) msg = nrs.length > 1 && t.startsWith('Terminkonflikt') ? `${workerName(nr)}: ${t}` : t;
+  }
+  $('#conflict').textContent = msg;
+}
+
+// Ausgewählte Monteure (ohne Lücken und Doppelte)
+function formTeam() {
+  const f = $('#jobForm');
+  return [...new Set(['mitarbeiter', 'mitarbeiter2', 'mitarbeiter3'].map(n => f.elements[n].value.trim()).filter(Boolean))];
+}
+
+// Überschneidung mit offenem Auftrag oder Urlaub/Krank
+function conflictText(id, nr, datum, von, dauer) {
+  if (!nr || !datum) return '';
+  const abs = absenceOf(nr, datum);
+  if (abs) return `Achtung: ${workerName(nr)} ist an diesem Tag ${abs.art === 'krank' ? 'krank gemeldet' : 'im Urlaub'}.`;
+  if (!von) return '';
+  const s = toMin(von), e = s + dauer;
+  const hit = ui.jobs.find(j => j.id !== id && j.mitarbeiter === nr && j.datum === datum && j.status !== 'fertig'
+    && toMin(j.von) < e && s < planEnd(j));
+  return hit ? `Terminkonflikt: ${hit.von} Uhr „${titleOf(hit)}“` : '';
 }
 
 async function saveForm(e) {
   e.preventDefault();
   const f = e.target;
   const v = k => f.elements[k].value.trim();
-  const nr = v('mitarbeiter');
-  if (!nr) { $('#formErr').textContent = 'Bitte einen Monteur auswählen.'; return; }
-  const w = ui.workers.find(x => x.nr === nr);
-  const data = {
-    mitarbeiter: nr, kunde: v('kunde'), auftrag: v('auftrag'), datum: v('datum'), von: v('von'),
+  const err = t => { $('#formErr').textContent = t; };
+  const nrs = formTeam();
+  if (!nrs.length) return err('Bitte einen Monteur auswählen.');
+  const worker = nr => ui.workers.find(x => x.nr === nr);
+  // Gemeinsame Angaben für alle Monteure des Auftrags
+  const shared = {
+    kunde: v('kunde'), auftrag: v('auftrag'), datum: v('datum'), von: v('von'),
     telefon: v('telefon'), strasse: v('strasse'), plz: v('plz'), ort: v('ort'), notiz: v('notiz'),
+    dauer: Number(v('dauer')) || null,
   };
+  const fresh = nr => ({ ...shared, mitarbeiter: nr, mitarbeiterUid: worker(nr)?.uid || null, status: 'offen', fertigAm: null });
+  const ops = [];
+
+  if (!ui.editId) {
+    const missing = nrs.find(nr => !worker(nr));
+    if (missing) return err(`Mitarbeiter ${missing} ist nicht angelegt.`);
+    const extra = nrs.length > 1 ? { gruppe: newGroupId(), team: teamOf(nrs) } : {};
+    nrs.forEach(nr => ops.push(() => store.addJob({ ...fresh(nr), ...extra })));
+  } else {
+    const old = ui.jobs.find(j => j.id === ui.editId);
+    if (!old) return err('Dieser Auftrag existiert nicht mehr.');
+    const rest = groupOf(old).filter(g => g.id !== old.id);
+    // Bisherige Aufträge den ausgewählten Monteuren zuordnen
+    const docs = [old];
+    for (const nr of nrs.slice(1)) {
+      const hit = rest.find(g => g.mitarbeiter === nr && !docs.includes(g));
+      docs.push(hit || null);
+    }
+    const removed = rest.filter(g => !docs.includes(g));
+    const missing = nrs.find((nr, i) => !worker(nr) && !(docs[i] && docs[i].mitarbeiter === nr));
+    if (missing) return err(`Mitarbeiter ${missing} ist nicht angelegt.`);
+    if (removed.length && !confirm(`${removed.map(g => workerName(g.mitarbeiter)).join(', ')} aus dem Auftrag entfernen?`)) return;
+    const extra = nrs.length > 1 ? { gruppe: old.gruppe || newGroupId(), team: teamOf(nrs) }
+      : old.team ? { team: null } : {};
+    nrs.forEach((nr, i) => {
+      const d = docs[i];
+      if (!d) { ops.push(() => store.addJob({ ...fresh(nr), ...extra })); return; }
+      const data = { ...shared, ...extra };
+      if (d.mitarbeiter !== nr) Object.assign(data, { mitarbeiter: nr, mitarbeiterUid: worker(nr)?.uid || null });
+      ops.push(() => store.updateJob(d.id, data));
+    });
+    removed.forEach(g => ops.push(() => store.deleteJob(g.id)));
+  }
+
   const btn = f.querySelector('.primary');
   btn.disabled = true;
+  const data = shared;
   try {
-    if (ui.editId) {
-      const old = ui.jobs.find(j => j.id === ui.editId);
-      if (old && old.mitarbeiter !== nr) data.mitarbeiterUid = w?.uid || null;
-      await store.updateJob(ui.editId, data);
-    } else {
-      if (!w) { $('#formErr').textContent = `Mitarbeiter ${nr} ist nicht angelegt.`; return; }
-      await store.addJob({ ...data, mitarbeiterUid: w.uid || null, status: 'offen', fertigAm: null });
-    }
+    await Promise.all(ops.map(op => op()));
     $('#formDlg').close();
     ui.day = data.datum;
     refresh();
@@ -618,6 +800,97 @@ async function saveForm(e) {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ================= Verschieben per Ziehen (Büro, Maus) =================
+function bindDrag() {
+  const clear = () => document.querySelectorAll('.drop-ok').forEach(x => x.classList.remove('drop-ok'));
+  const end = d => {
+    d.ghost?.remove(); d.tip?.remove(); d.el.classList.remove('dragging'); clear();
+    ui.suppressClick = true; setTimeout(() => { ui.suppressClick = false; }, 80);
+  };
+
+  $('#content').addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.pointerType === 'touch') return; // am Handy bleibt Wischen zum Scrollen
+    const el = e.target.closest('.pc, .mini');
+    const j = el && ui.jobs.find(x => x.id === el.dataset.id);
+    if (!j || j.status === 'fertig') return;
+    const r = el.getBoundingClientRect();
+    ui.drag = { el, j, x0: e.clientX, y0: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, active: false, target: null };
+  });
+
+  addEventListener('pointermove', e => {
+    const d = ui.drag;
+    if (!d) return;
+    if (!d.active) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+      d.active = true;
+      d.ghost = d.el.cloneNode(true);
+      d.ghost.classList.add('drag-ghost');
+      Object.assign(d.ghost.style, { width: d.w + 'px', height: d.h + 'px', top: 0, left: 0 });
+      d.tip = document.createElement('div');
+      d.tip.className = 'drag-time';
+      document.body.append(d.ghost, d.tip);
+      d.el.classList.add('dragging');
+    }
+    e.preventDefault();
+    d.ghost.style.transform = `translate(${e.clientX - d.dx}px, ${e.clientY - d.dy}px)`;
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const lane = under?.closest('.pt-lane'), cell = under?.closest('.wk-cell');
+    clear();
+    d.target = null;
+    if (lane) {
+      const x = e.clientX - d.dx - lane.getBoundingClientRect().left - 2; // linke Kante der Karte
+      const min = Math.min(Math.max(Math.round((ui.plan.start * 60 + x / ui.plan.hw * 60) / 15) * 15, 0), 23 * 60 + 45);
+      d.target = { nr: lane.dataset.nr, datum: lane.dataset.day, von: fromMin(min) };
+      lane.classList.add('drop-ok');
+      d.tip.textContent = `${workerName(d.target.nr)} · ${d.target.von} Uhr`;
+    } else if (cell) {
+      d.target = { nr: cell.dataset.nr, datum: cell.dataset.day, von: d.j.von };
+      cell.classList.add('drop-ok');
+      d.tip.textContent = `${workerName(d.target.nr)} · ${shortDate(d.target.datum)}`;
+    }
+    d.tip.hidden = !d.target;
+    d.tip.style.left = e.clientX + 14 + 'px';
+    d.tip.style.top = e.clientY + 16 + 'px';
+  });
+
+  addEventListener('pointerup', () => {
+    const d = ui.drag;
+    ui.drag = null;
+    if (!d || !d.active) return;
+    end(d);
+    if (d.target) moveJob(d.j, d.target);
+  });
+  addEventListener('pointercancel', () => { if (ui.drag?.active) end(ui.drag); ui.drag = null; });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && ui.drag?.active) { end(ui.drag); ui.drag = null; } });
+}
+
+async function moveJob(j, t) {
+  if (t.nr === j.mitarbeiter && t.datum === j.datum && t.von === j.von) return;
+  const w = ui.workers.find(x => x.nr === t.nr);
+  if (!w) { alert(`Mitarbeiter ${t.nr} ist nicht (mehr) angelegt.`); return; }
+  const group = groupOf(j);
+  if (t.nr !== j.mitarbeiter && group.some(g => g.id !== j.id && g.mitarbeiter === t.nr)) {
+    alert(`${w.name} ist bei diesem Auftrag schon dabei.`); return;
+  }
+  // Datum/Uhrzeit gelten für das ganze Team – Abwesenheiten aller prüfen
+  const nrsAfter = group.map(g => g.id === j.id ? t.nr : g.mitarbeiter);
+  const away = nrsAfter.map(nr => ({ nr, a: absenceOf(nr, t.datum) })).filter(x => x.a);
+  if (away.length && !confirm(`${away.map(x => `${workerName(x.nr)} ist an diesem Tag ${x.a.art === 'krank' ? 'krank gemeldet' : 'im Urlaub'}`).join('\n')}.\n\nTrotzdem verschieben?`)) return;
+  const team = group.length > 1 ? { team: teamOf(nrsAfter) } : {};
+  const timeChanged = t.datum !== j.datum || t.von !== j.von;
+  const ops = group.map(g => {
+    if (g.id === j.id) {
+      const data = { mitarbeiter: t.nr, datum: t.datum, von: t.von, ...team };
+      if (t.nr !== j.mitarbeiter) data.mitarbeiterUid = w.uid || null;
+      return store.updateJob(g.id, data);
+    }
+    if (!timeChanged && !team.team) return null;
+    return g.status === 'fertig' && !team.team ? null : store.updateJob(g.id, { ...(timeChanged && g.status !== 'fertig' ? { datum: t.datum, von: t.von } : {}), ...team });
+  });
+  try { await Promise.all(ops); }
+  catch (x) { alert('Verschieben fehlgeschlagen.'); }
 }
 
 // ================= Passwort / PIN ändern =================
@@ -675,6 +948,9 @@ function bindEvents() {
   // Büro: Inhalte
   const c = $('#content');
   c.onclick = e => {
+    if (ui.suppressClick) return; // Klick direkt nach dem Verschieben ignorieren
+    const delAbs = e.target.closest('[data-del-abs]');
+    if (delAbs) { if (confirm('Eintrag löschen?')) store.deleteAbsence(delAbs.dataset.delAbs); return; }
     const job = e.target.closest('[data-id]');
     if (job) { openDetail(job.dataset.id); return; }
     const act = e.target.closest('[data-act]');
@@ -714,7 +990,10 @@ function bindEvents() {
     if (id === 'pastToggle') { ui.listPast = e.target.checked; renderList(); }
   };
   c.oninput = e => { if (e.target.id === 'searchIn') { ui.search = e.target.value; renderList(); } };
-  c.onsubmit = e => { if (e.target.id === 'addWorkerForm') { e.preventDefault(); addWorker(e); } };
+  c.onsubmit = e => {
+    if (e.target.id === 'addWorkerForm') { e.preventDefault(); addWorker(e); }
+    if (e.target.id === 'addAbsForm') { e.preventDefault(); addAbsence(e); }
+  };
 
   // Monteur
   $('#workerView').onclick = e => {
@@ -730,8 +1009,18 @@ function bindEvents() {
 
   // Formular
   $('#jobForm').onsubmit = saveForm;
-  $('#jobForm').addEventListener('input', e => { if (['mitarbeiter', 'datum', 'von'].includes(e.target.name)) checkConflict(); });
-  $('#jobForm').addEventListener('change', e => { if (e.target.name === 'mitarbeiter') checkConflict(); });
+  const watched = ['mitarbeiter', 'mitarbeiter2', 'mitarbeiter3', 'datum', 'von', 'dauer'];
+  $('#jobForm').addEventListener('input', e => { if (watched.includes(e.target.name)) checkConflict(); });
+  $('#jobForm').addEventListener('change', e => { if (watched.includes(e.target.name)) checkConflict(); });
+  $('#addTeam').onclick = () => {
+    const next = $('#m2wrap').hidden ? '#m2wrap' : '#m3wrap';
+    $(next).hidden = false;
+    $(next + ' select').focus();
+    $('#addTeam').hidden = !$('#m3wrap').hidden ? true : false;
+  };
+
+  // Büro: Aufträge in der Plantafel verschieben
+  bindDrag();
 
   // Dialoge schließen
   document.addEventListener('click', e => { const x = e.target.closest('[data-close]'); if (x) x.closest('dialog').close(); });

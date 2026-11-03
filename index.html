@@ -313,6 +313,45 @@
   .g-addr { display: grid; grid-template-columns: 1fr 110px 1fr; gap: 12px; }
   .conflict { color: var(--red); font-size: 13px; font-weight: 600; margin: -6px 0 0; }
   .factions { display: flex; justify-content: flex-end; gap: 8px; }
+  .g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .team-sel { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+
+  /* Offline-Hinweis */
+  .offline { background: #58585b; color: #fff; padding: 5px 16px; font-size: 12px; text-align: center; }
+
+  /* Vor Ort / Angekommen */
+  .badge.vorort { background: #e88a00; }
+  .st-vorort { border-left-color: #e88a00; }
+  .st-vorort .dot { background: #e88a00; }
+  .btn.outline { background: none; color: var(--blue); box-shadow: inset 0 0 0 2px var(--blue); }
+
+  /* Arbeitsbericht (dezent) */
+  .report summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; list-style: none; }
+  .report summary::-webkit-details-marker { display: none; }
+  .report summary::before { content: "+ "; }
+  .report[open] summary::before { content: "– "; }
+  .report textarea { min-height: 80px; font-size: 14px; margin-top: 6px; }
+  .report .saved { font-size: 12px; color: var(--green); margin-left: 8px; }
+
+  /* Verschieben per Ziehen */
+  .pc, .mini { -webkit-user-select: none; user-select: none; }
+  @media (hover: hover) { .pc:not(.st-erledigt), .mini:not(.st-erledigt) { cursor: grab; } }
+  .dragging { opacity: .35; }
+  .drag-ghost { position: fixed; z-index: 100; pointer-events: none; opacity: .92; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); }
+  .drag-time { position: fixed; z-index: 101; pointer-events: none; background: var(--blue); color: #fff; font-size: 12px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .drop-ok { outline: 2px dashed var(--blue); outline-offset: -2px; }
+
+  /* Urlaub / Krank */
+  .abs-band {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none; display: flex; align-items: flex-end; justify-content: flex-start;
+    background: repeating-linear-gradient(135deg, rgba(88, 88, 91, .13) 0 10px, rgba(88, 88, 91, .05) 10px 20px);
+  }
+  .abs-band span, .abs-tag { font-size: 11px; font-weight: 700; color: #fff; background: #8a8f96; padding: 2px 8px; margin: 4px; border-radius: 999px; }
+  .abs-band.krank span, .abs-tag.krank { background: #b35b5b; }
+  .abs-band span { position: sticky; left: 158px; }
+  .wk-cell.abs { background: repeating-linear-gradient(135deg, rgba(88, 88, 91, .13) 0 10px, rgba(88, 88, 91, .05) 10px 20px), var(--lane); }
+  .wk-cell .abs-tag { justify-self: start; margin: 0; }
+  .add-abs { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap: 10px; align-items: end; }
 
   /* Schmale Bildschirme */
   @media (max-width: 760px) {
@@ -330,10 +369,15 @@
     .pt { max-height: calc(100vh - 230px); }
     .pt-who { flex-basis: 64px; width: 64px; justify-content: center; padding: 8px 4px; }
     .pt-who .nm { display: none; }
+    .abs-band span { left: 72px; }
     .wk-grid { grid-template-columns: 64px repeat(7, minmax(110px, 1fr)); min-width: 834px; }
     .hide-m { display: none; }
     .add-worker { grid-template-columns: 1fr 1fr; }
     .add-worker .wide { grid-column: span 2; }
+    .add-abs { grid-template-columns: 1fr 1fr; }
+    .add-abs .wide { grid-column: span 2; }
+    .g3 { grid-template-columns: 1fr 1fr; }
+    .g3 .wide-m { grid-column: span 2; }
     .sheet { width: 100vw; max-width: 100vw; height: 100%; max-height: 100%; margin: 0; border-radius: 0; }
     .form-dlg { width: 100vw; max-width: 100vw; height: 100%; max-height: 100%; margin: 0; border-radius: 0; }
     .fbody { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -346,6 +390,7 @@
 <div class="banner" id="demoBanner" hidden>
   <b>Demo-Modus:</b> Daten nur in diesem Browser. Büro-Passwort <b>buero</b> · Monteur <b>101</b> mit PIN <b>123456</b>
 </div>
+<div class="offline" id="offlineBanner" hidden>Offline – Änderungen werden übertragen, sobald wieder Netz da ist.</div>
 
 <!-- Anmeldung -->
 <div class="login" id="loginView" hidden>
@@ -445,7 +490,12 @@
       <span id="formBadge"></span>
     </div>
     <div class="fsec">Mitarbeiter</div>
-    <label class="field"><span>Monteur *</span><select name="mitarbeiter" required></select></label>
+    <div class="team-sel">
+      <label class="field"><span>Monteur *</span><select name="mitarbeiter" required></select></label>
+      <label class="field" id="m2wrap" hidden><span>2. Monteur</span><select name="mitarbeiter2"></select></label>
+      <label class="field" id="m3wrap" hidden><span>3. Monteur</span><select name="mitarbeiter3"></select></label>
+    </div>
+    <button type="button" class="link" id="addTeam" style="justify-self:start;margin-top:-6px">+ weiteren Monteur</button>
     <p class="conflict" id="conflict"></p>
     <div class="fsec">Kunde</div>
     <div class="g2">
@@ -459,9 +509,15 @@
     </div>
     <div class="fsec">Termindetails</div>
     <label class="field"><span>Auftrag</span><input name="auftrag" maxlength="150" placeholder="z. B. Heizungswartung"></label>
-    <div class="g2">
+    <div class="g3">
       <label class="field"><span>Datum *</span><input name="datum" type="date" required></label>
       <label class="field"><span>Uhrzeit beim Kunden *</span><input name="von" type="time" required></label>
+      <label class="field wide-m"><span>Geplante Dauer</span><select name="dauer">
+        <option value="">keine Angabe</option>
+        <option value="30">30 Min.</option><option value="60">1 Std.</option><option value="90">1,5 Std.</option>
+        <option value="120">2 Std.</option><option value="180">3 Std.</option><option value="240">4 Std.</option>
+        <option value="360">6 Std.</option><option value="480">ganzer Tag (8 Std.)</option>
+      </select></label>
     </div>
     <label class="field"><span>Notiz</span><textarea name="notiz" maxlength="1000" placeholder="z. B. Material, Zugang, Hinweise"></textarea></label>
     <p class="hint">Die Endzeit trägt der Monteur automatisch ein, wenn er auf „Fertig“ tippt.</p>
