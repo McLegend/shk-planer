@@ -71,8 +71,21 @@ function demoStore() {
     },
     watchWorkers(cb) { return sub(() => cb(Object.values(db.workers).map(({ nr, name }) => ({ nr, name })).sort(byNr))); },
     watchWorker(nr, cb) { return sub(() => { const w = db.workers[nr]; cb(w ? { nr: w.nr, name: w.name } : null); }); },
-    watchJobs(nr, cb) { return sub(() => cb(Object.values(db.jobs).filter(j => j.mitarbeiter === nr))); },
-    watchAllJobs(cb) { return sub(() => cb(Object.values(db.jobs))); },
+    // Wie bei Firebase: nur ab „from“ plus offene, Älteres bei Bedarf
+    watchJobs(nr, cb, from) {
+      return sub(() => cb(Object.values(db.jobs).filter(j => j.mitarbeiter === nr && (j.datum >= from || j.status === 'offen'))));
+    },
+    watchAllJobs(cb, from) {
+      let loadedFrom = from;
+      const custIds = new Set(), custNames = new Set();
+      const pick = j => j.datum >= loadedFrom || j.status === 'offen' || custIds.has(j.kundeId) || custNames.has(j.kunde);
+      const send = () => cb(Object.values(db.jobs).filter(pick));
+      const stop = sub(send);
+      stop.loadFrom = day => { if (day < loadedFrom) { loadedFrom = day; send(); } };
+      stop.loadCustomer = c => { custIds.add(c.id); if (c.name) custNames.add(c.name); send(); };
+      return stop;
+    },
+    async jobsBefore(day) { return Object.values(db.jobs).filter(j => j.datum < day); },
     async addJob(job) {
       const id = 'j' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       db.jobs[id] = { ...job, id }; write();
@@ -178,6 +191,25 @@ async function firebaseStore() {
   const list = (q, cb) => F.onSnapshot(q,
     snap => cb(snap.docs.map(d => ({ ...d.data(), id: d.id }))),
     err => console.error(err));
+  // Mehrere Live-Abfragen zu einer Liste zusammenführen (jeder Auftrag nur einmal)
+  const merger = cb => {
+    const parts = new Map(), unsubs = [];
+    const emit = () => {
+      const all = new Map();
+      for (const js of parts.values()) for (const j of js) all.set(j.id, j);
+      cb([...all.values()]);
+    };
+    return {
+      add(key, q, onErr) {
+        if (parts.has(key)) return;
+        parts.set(key, []);
+        unsubs.push(F.onSnapshot(q,
+          snap => { parts.set(key, snap.docs.map(d => ({ ...d.data(), id: d.id }))); emit(); },
+          err => { parts.delete(key); onErr ? onErr(err) : console.error(err); }));
+      },
+      stop: () => unsubs.forEach(u => u()),
+    };
+  };
 
   return {
     mode: 'firebase',
@@ -217,20 +249,48 @@ async function firebaseStore() {
     watchWorkers(cb) {
       return list(F.collection(db, 'mitarbeiter'), ws => cb(ws.map(({ nr, name, uid }) => ({ nr, name, uid })).sort(byNr)));
     },
-    // Nur fürs Büro: alle Aufträge aller Mitarbeiter (Plantafel)
-    watchAllJobs(cb) {
-      return list(F.collection(db, 'auftraege'), cb);
+    // Nur fürs Büro. Spart Lesezugriffe: live geladen werden nur Aufträge ab „from“ plus alle offenen
+    // (damit Überfällige nie fehlen). Älteres kommt erst bei Bedarf dazu (loadFrom / loadCustomer).
+    watchAllJobs(cb, from) {
+      const col = F.collection(db, 'auftraege');
+      const m = merger(cb);
+      let loadedFrom = from;
+      m.add('ab', F.query(col, F.where('datum', '>=', from)));
+      m.add('offen', F.query(col, F.where('status', '==', 'offen')));
+      const stop = m.stop;
+      stop.loadFrom = day => {
+        if (day >= loadedFrom) return;
+        m.add('ab' + day, F.query(col, F.where('datum', '>=', day), F.where('datum', '<', loadedFrom)));
+        loadedFrom = day;
+      };
+      stop.loadCustomer = c => {
+        m.add('kid:' + c.id, F.query(col, F.where('kundeId', '==', c.id)));
+        if (c.name) m.add('kn:' + c.name, F.query(col, F.where('kunde', '==', c.name)));
+      };
+      return stop;
+    },
+    // Für die Löschfristen: nur die Aufträge vor dem Stichtag abfragen
+    async jobsBefore(day) {
+      const s = await F.getDocs(F.query(F.collection(db, 'auftraege'), F.where('datum', '<', day)));
+      return s.docs.map(d => ({ ...d.data(), id: d.id }));
     },
     watchWorker(nr, cb) {
       return F.onSnapshot(F.doc(db, 'mitarbeiter', nr), d => cb(d.exists() ? d.data() : null), () => cb(null));
     },
-    watchJobs(nr, cb) {
+    watchJobs(nr, cb, from) {
       const u = auth.currentUser;
-      // Mitarbeiter fragen über ihre Konto-ID ab (so verlangen es die Sicherheitsregeln)
-      const filter = u && u.email !== OFFICE_EMAIL
-        ? F.where('mitarbeiterUid', '==', u.uid)
-        : F.where('mitarbeiter', '==', nr);
-      return list(F.query(F.collection(db, 'auftraege'), filter), cb);
+      const col = F.collection(db, 'auftraege');
+      if (!u || u.email === OFFICE_EMAIL) return list(F.query(col, F.where('mitarbeiter', '==', nr)), cb);
+      // Mitarbeiter fragen über ihre Konto-ID ab (so verlangen es die Sicherheitsregeln).
+      // Nur ab „from“ plus alle offenen. Fehlt in Firebase der Index dafür, wird wie früher alles geladen.
+      const mine = F.where('mitarbeiterUid', '==', u.uid);
+      const m = merger(cb);
+      m.add('offen', F.query(col, mine, F.where('status', '==', 'offen')));
+      m.add('ab', F.query(col, mine, F.where('datum', '>=', from)), err => {
+        console.warn('Index für Monteur-Abfrage fehlt, lade alle Aufträge', err);
+        m.add('alle', F.query(col, mine));
+      });
+      return m.stop;
     },
     addJob: job => queued(F.addDoc(F.collection(db, 'auftraege'), job)),
     updateJob: (id, data) => queued(F.updateDoc(F.doc(db, 'auftraege', id), data)),

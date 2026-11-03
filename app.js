@@ -53,8 +53,13 @@ const cardState = j => onSite(j) ? 'vorort' : stateOf(j);
 const badge = j => onSite(j) ? '<span class="badge vorort">Vor Ort</span>' : (s => `<span class="badge ${s}">${STATE_LABEL[s]}</span>`)(stateOf(j));
 const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const arrivedAt = j => j.angekommenAm ? new Date(j.angekommenAm) : null;
-// Ende in der Plantafel: echte Fertig-Zeit, sonst Beginn + geplante Dauer (ohne Angabe 1 Std.)
-const planEnd = j => endMin(j) ?? toMin(j.von) + (Number(j.dauer) || 60);
+// Ankunftszeit in Minuten (wenn am selben Tag)
+const arrMin = j => { const a = arrivedAt(j); return a && ymd(a) === j.datum ? a.getHours() * 60 + a.getMinutes() : null; };
+// Schätzung des Monteurs vor Ort: Ankunft + „dauerVorOrt“
+const estEnd = j => j.dauerVorOrt && arrMin(j) !== null ? arrMin(j) + Number(j.dauerVorOrt) : null;
+// Ende in der Plantafel: echte Fertig-Zeit, sonst Schätzung vor Ort, sonst Beginn + geplante Dauer (ohne Angabe 1 Std.)
+const planEnd = j => endMin(j) ?? estEnd(j) ?? toMin(j.von) + (Number(j.dauer) || 60);
+const DUR_OPTS = [[30, '30 Min.'], [60, '1 Std.'], [90, '1,5 Std.'], [120, '2 Std.'], [180, '3 Std.'], [240, '4 Std.'], [360, '6 Std.'], [480, '8 Std.']];
 const dauerText = m => m ? `ca. ${duration(Number(m))}` : '';
 const shortDate = k => parseYmd(k).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
 const timeRange = j => { const e = endMin(j); return e !== null && e > toMin(j.von) ? `${j.von} – ${fromMin(e)}` : j.von; };
@@ -122,7 +127,7 @@ function layoutLanes(list) {
 const ui = {
   session: null, workers: [], jobs: [], absences: [], customers: [], custEdit: null, custSearch: '', formKundeId: null, me: null, unsub: [], drag: null, suppressClick: false,
   view: 'plan', mode: 'day', day: todayKey(), filter: '',
-  listStatus: 'alle', listPast: false, search: '',
+  listStatus: 'alle', listRange: 'alle', listPast: false, search: '',
   wPage: 'termine', wTab: 'geplant',
   detailId: null, editId: null, plan: { start: 6, hw: 90 }, scrollPlan: false,
 };
@@ -158,7 +163,7 @@ function stopWatching() { ui.unsub.forEach(f => f && f()); ui.unsub = []; }
 // ================= Anmeldung =================
 function showLogin() {
   stopWatching();
-  ui.jobs = []; ui.workers = []; ui.absences = []; ui.customers = [];
+  ui.jobs = []; ui.workers = []; ui.absences = []; ui.customers = []; ui.jobsCtl = null;
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#appView').hidden = true;
   $('#workerView').hidden = true;
@@ -213,14 +218,28 @@ function enterOffice() {
     refresh();
     if (ui.purge) { ui.purge.abs = true; purgeOld(); }
   }));
-  ui.unsub.push(store.watchAllJobs(js => {
+  ui.jobsFrom = windowStart();
+  ui.jobsCtl = store.watchAllJobs(js => {
     ui.jobs = sortJobs(js);
     refresh();
     if ($('#detailDlg').open) renderDetail();
     if ($('#custDlg').open) renderCustomerDlg();
     if (ui.purge) { ui.purge.jobs = true; purgeOld(); }
-  }));
+  }, ui.jobsFrom);
+  ui.unsub.push(ui.jobsCtl);
   setView(lsGet('shk-view') || 'plan');
+}
+
+// Lesezugriffe sparen: beim Start nur Aufträge der letzten Wochen, alles Kommende und alle offenen.
+// Ältere Tage werden erst geladen, wenn man sie ansieht (Kalender zurückblättern, „Vergangene Termine“).
+const WINDOW_DAYS = 35;
+const windowStart = () => ymd(addDays(parseYmd(todayKey()), -WINDOW_DAYS));
+const ALL_PAST = '0000-01-01';
+function ensureJobs(day) {
+  if (!ui.jobsCtl || !isDay(day) || day >= ui.jobsFrom) return;
+  const start = day === ALL_PAST ? day : day.slice(0, 8) + '01'; // gleich den ganzen Monat
+  ui.jobsFrom = start;
+  ui.jobsCtl.loadFrom(start);
 }
 
 // Löschfristen (stehen so in datenschutz.html): Abwesenheiten 13 Monate nach Ende,
@@ -230,17 +249,22 @@ const KEEP_ABS_MONTHS = 13, KEEP_JOB_MONTHS = 60;
 const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const monthsAgo = m => { const d = new Date(); d.setMonth(d.getMonth() - m); return ymd(d); };
 
-function purgeOld() {
+async function purgeOld() {
   if (!ui.purge || !ui.purge.jobs || !ui.purge.abs || !ui.purge.cust) return;
   ui.purge = null;
   const jobCut = monthsAgo(KEEP_JOB_MONTHS), absCut = monthsAgo(KEEP_ABS_MONTHS);
-  const oldJobs = ui.jobs.filter(j => isDay(j.datum) && j.datum < jobCut);
+  // Alte Aufträge sind nicht geladen: gezielt nur die vor dem Stichtag abfragen
+  let oldJobs;
+  try { oldJobs = (await store.jobsBefore(jobCut)).filter(j => isDay(j.datum)); }
+  catch (e) { console.warn('Löschfristen: Abfrage fehlgeschlagen', e); return; }
+  if (ui.session?.role !== 'office') return;
   const oldAbs = ui.absences.filter(a => isDay(a.bis) && a.bis < absCut);
   const oldCust = ui.customers.filter(c => { const l = lastUse(c); return isDay(l) && l < jobCut; });
   if (oldJobs.length + oldAbs.length + oldCust.length) {
     // Schutz vor falsch gestellter Uhr: wenn auffällig viel weg soll, erst nachfragen
-    const many = oldJobs.length > 20 && oldJobs.length > ui.jobs.length / 2;
-    if (many && !confirm(`${oldJobs.length} von ${ui.jobs.length} Aufträgen sind laut Löschfrist älter als 5 Jahre.\n\nBitte prüfen, ob Datum und Uhrzeit dieses Geräts stimmen (heute: ${new Date().toLocaleDateString('de-DE')}).\n\nJetzt löschen?`)) return;
+    const total = new Set([...ui.jobs, ...oldJobs].map(j => j.id)).size;
+    const many = oldJobs.length > 20 && oldJobs.length > total / 2;
+    if (many && !confirm(`${oldJobs.length} von ${total} Aufträgen sind laut Löschfrist älter als 5 Jahre.\n\nBitte prüfen, ob Datum und Uhrzeit dieses Geräts stimmen (heute: ${new Date().toLocaleDateString('de-DE')}).\n\nJetzt löschen?`)) return;
     oldJobs.forEach(j => store.deleteJob(j.id));
     oldAbs.forEach(a => store.deleteAbsence(a.id));
     oldCust.forEach(c => store.deleteCustomer(c.id));
@@ -293,14 +317,19 @@ function setView(v) {
           <option value="alle">Alle</option><option value="geplant">Geplant</option>
           <option value="ueberfaellig">Überfällig</option><option value="erledigt">Erledigt</option>
         </select>
+        <select id="rangeSel" aria-label="Zeitraum filtern">
+          <option value="alle">Alle Tage</option><option value="heute">Heute</option><option value="morgen">Morgen</option>
+          <option value="woche">Diese Woche</option><option value="naechste">Nächste Woche</option><option value="monat">Dieser Monat</option>
+        </select>
         <select id="filterSel" aria-label="Mitarbeiter filtern"></select>
-        <label class="toggle">Vergangene Termine<input type="checkbox" id="pastToggle" ${ui.listPast ? 'checked' : ''}></label>
+        <label class="toggle"${ui.listRange !== 'alle' ? ' hidden' : ''}>Vergangene Termine<input type="checkbox" id="pastToggle" ${ui.listPast ? 'checked' : ''}></label>
       </div>
       <div class="table-wrap"><table class="tbl">
         <thead><tr><th>Datum</th><th>Zeit</th><th>Status</th><th>Mitarbeiter</th><th>Auftrag</th><th class="hide-m">Ausführungsort</th></tr></thead>
         <tbody id="listBody"></tbody></table></div>
       <div class="count" id="listCount"></div>`;
     $('#statusSel').value = ui.listStatus;
+    $('#rangeSel').value = ui.listRange;
   } else if (v === 'kunden') {
     ui.custEdit = null;
     c.innerHTML = `
@@ -394,6 +423,7 @@ function renderPlan() {
   if (!body) return;
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === ui.mode));
   const d = parseYmd(ui.day);
+  ensureJobs(ui.mode === 'week' ? ymd(mondayOf(d)) : ui.day);
   $('#dateInput').value = ui.day;
   if (ui.mode === 'day') {
     $('#title').textContent = d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -496,23 +526,54 @@ function renderList() {
   if (!tb) return;
   const q = ui.search.trim().toLowerCase();
   const t = todayKey();
+  // Zeitraum: [von, bis] als Tagesschlüssel; bei gewähltem Zeitraum zählen auch vergangene Tage darin
+  const now = parseYmd(t), mon = mondayOf(now);
+  const range = {
+    heute: [t, t],
+    morgen: [ymd(addDays(now, 1)), ymd(addDays(now, 1))],
+    woche: [ymd(mon), ymd(addDays(mon, 6))],
+    naechste: [ymd(addDays(mon, 7)), ymd(addDays(mon, 13))],
+    monat: [ymd(new Date(now.getFullYear(), now.getMonth(), 1)), ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0))],
+  }[ui.listRange];
+  if (range) ensureJobs(range[0]);
+  else if (ui.listPast) ensureJobs(ALL_PAST);
   const rows = ui.jobs.filter(j => {
     const s = stateOf(j);
     if (ui.listStatus !== 'alle' && s !== ui.listStatus) return false;
     if (ui.filter && j.mitarbeiter !== ui.filter) return false;
-    if (!ui.listPast && j.datum < t && s === 'erledigt') return false;
+    if (range && (j.datum < range[0] || j.datum > range[1])) return false;
+    if (!range && !ui.listPast && j.datum < t && s === 'erledigt') return false;
     if (q && ![j.kunde, j.auftrag, j.strasse, j.ort, j.plz, workerName(j.mitarbeiter)].join(' ').toLowerCase().includes(q)) return false;
     return true;
   });
-  tb.innerHTML = rows.length ? rows.map(j => `<tr data-id="${esc(j.id)}">
+  // Reihenfolge: Überfällig (älteste zuerst) → Offen → Erledigt (neueste zuerst)
+  const key = j => j.datum + j.von;
+  const RANK = { ueberfaellig: 0, geplant: 1, erledigt: 2 };
+  rows.sort((a, b) => {
+    const ra = RANK[stateOf(a)], rb = RANK[stateOf(b)];
+    if (ra !== rb) return ra - rb;
+    return ra === 2 ? key(b).localeCompare(key(a)) : key(a).localeCompare(key(b));
+  });
+  const GROUP = { ueberfaellig: 'Überfällig', geplant: 'Offen', erledigt: 'Erledigt' };
+  const counts = rows.reduce((m, j) => (m[stateOf(j)] = (m[stateOf(j)] || 0) + 1, m), {});
+  const showGroups = Object.keys(counts).length > 1;
+  let last = null;
+  const row = j => {
+    const s = stateOf(j);
+    const head = showGroups && s !== last ? `<tr class="grp grp-${s}"><td colspan="6">${GROUP[s]} · ${counts[s]}</td></tr>` : '';
+    last = s;
+    return head + `<tr data-id="${esc(j.id)}" class="st-${s}">
       <td class="b">${j.datum === t ? 'Heute' : parseYmd(j.datum).toLocaleDateString('de-DE')}</td>
       <td class="b">${esc(timeRange(j))}</td>
       <td>${badge(j)}</td>
       <td><span class="who-cell">${avatar(j.mitarbeiter, workerName(j.mitarbeiter))}<span class="hide-m">${esc(workerName(j.mitarbeiter))}</span></span></td>
       <td>${esc(titleOf(j))}${j.auftrag ? `<div class="sub">${esc(j.kunde)}</div>` : ''}</td>
       <td class="hide-m">${esc(address(j))}</td>
-    </tr>`).join('') : '<tr><td colspan="6" class="sub" style="text-align:center;padding:30px">Keine Aufträge gefunden.</td></tr>';
-  $('#listCount').textContent = `${rows.length} ${rows.length === 1 ? 'Auftrag' : 'Aufträge'}`;
+    </tr>`;
+  };
+  tb.innerHTML = rows.length ? rows.map(row).join('') : '<tr><td colspan="6" class="sub" style="text-align:center;padding:30px">Keine Aufträge gefunden.</td></tr>';
+  $('#listCount').textContent = `${rows.length} ${rows.length === 1 ? 'Auftrag' : 'Aufträge'}`
+    + (!range && !ui.listPast && q ? ' · Ältere Aufträge werden erst mit „Vergangene Termine“ durchsucht.' : '');
 }
 
 function renderWorkersPage() {
@@ -584,6 +645,9 @@ function jobsOfCustomer(c) {
 
 function openCustomer(id) {
   ui.custView = id;
+  // Ältere Aufträge dieses Kunden gezielt nachladen
+  const c = ui.customers.find(x => x.id === id);
+  if (c && ui.jobsCtl) ui.jobsCtl.loadCustomer(c);
   renderCustomerDlg();
   if (!$('#custDlg').open) $('#custDlg').showModal();
 }
@@ -742,7 +806,7 @@ function enterWorker() {
     ui.jobs = sortJobs(js);
     renderWorker();
     if ($('#detailDlg').open) renderDetail();
-  }));
+  }, windowStart()));
   renderWorker();
 }
 
@@ -818,12 +882,30 @@ function renderDetail() {
   const fmtTime = d => d.toDateString() === parseYmd(j.datum).toDateString() ? `${hm(d)} Uhr` : `${d.toLocaleDateString('de-DE')} ${hm(d)} Uhr`;
   let work = `<div class="row">${icon('cal')}<div>Geplant ${esc(j.von)} Uhr${j.dauer ? ` · ${esc(dauerText(j.dauer))}` : ''}<br><span class="hint">${esc(dayLabel(j.datum))}</span></div></div>`;
   if (a) work += `<div class="row">${icon('place')}<div>Angekommen ${fmtTime(a)}</div></div>`;
+  // Vor Ort: Monteur schätzt, wie lange es dauert
+  if (a && !done) {
+    const est = estEnd(j);
+    const estTxt = est !== null && est < 24 * 60 ? `fertig ca. ${fromMin(est)} Uhr` : '';
+    if (!office) {
+      work += `<div class="row">${icon('clock')}<div><label for="estDur">Dauert voraussichtlich</label>
+        <div class="inl-row"><select class="inl" id="estDur"><option value="">bitte wählen</option>${DUR_OPTS.map(([m, t]) => `<option value="${m}"${Number(j.dauerVorOrt) === m ? ' selected' : ''}>${t}</option>`).join('')}</select>
+        ${estTxt ? `<span class="hint">→ ${estTxt}</span>` : ''}</div></div></div>`;
+    } else if (j.dauerVorOrt) {
+      work += `<div class="row">${icon('clock')}<div>Monteur schätzt ${esc(dauerText(j.dauerVorOrt))}${estTxt ? `<br><span class="hint">${estTxt}</span>` : ''}</div></div>`;
+    }
+  }
   if (done && f) {
     const from = a || new Date(`${j.datum}T${j.von}`);
     const mins = Math.round((f - from) / 60000);
     work += `<div class="row">${icon('clock')}<div>Fertig ${fmtTime(f)}</div>${mins > 0 && mins < 24 * 60 ? `<span class="r">${duration(mins)}${a ? '' : ' ab Plan'}</span>` : ''}</div>`;
   } else if (!office) {
     work += `<div class="info">${icon('info')}<span>${a ? 'Erst nach Abschluss der Arbeiten „Fertig“ drücken – die Uhrzeit wird automatisch eingetragen.' : 'Beim Kunden „Angekommen“ drücken, nach Abschluss „Fertig“. Die Uhrzeiten werden automatisch eingetragen.'}</span></div>`;
+  }
+  // Büro: Endzeit nachträglich eintragen oder korrigieren
+  if (office) {
+    work += `<div class="row">${icon('clock')}<div><label for="endTime">${done && f ? 'Endzeit ändern' : 'Endzeit nachtragen'}</label>
+      <div class="inl-row"><input class="inl" type="time" id="endTime" value="${done && f && ymd(f) === j.datum ? hm(f) : ''}">
+      <button class="btn" type="button" id="saveEnd">Speichern</button></div></div></div>`;
   }
 
   // Arbeitsbericht: dezent zum Aufklappen
@@ -885,6 +967,16 @@ function renderDetail() {
     save(data, $('#toggleDone'));
   };
   if ($('#arrived')) $('#arrived').onclick = () => save({ angekommenAm: new Date().toISOString() }, $('#arrived'));
+  if ($('#estDur')) $('#estDur').onchange = e => save({ dauerVorOrt: Number(e.target.value) || null }, null);
+  if ($('#saveEnd')) $('#saveEnd').onclick = () => {
+    const t = $('#endTime').value;
+    if (!t) { alert('Bitte eine Uhrzeit eingeben.'); return; }
+    const end = new Date(`${j.datum}T${t}`);
+    const start = a && ymd(a) === j.datum ? a : new Date(`${j.datum}T${j.von}`);
+    if (end <= start && !confirm(`Die Endzeit ${t} Uhr liegt vor dem Beginn (${hm(start)} Uhr). Trotzdem speichern?`)) return;
+    if (!done && !confirm('Der Auftrag wird damit als erledigt markiert. Fortfahren?')) return;
+    save({ status: 'fertig', fertigAm: end.toISOString() }, $('#saveEnd'));
+  };
   if ($('#saveReport')) $('#saveReport').onclick = async () => {
     await save({ bericht: reportVal() }, null);
     $('#reportSaved').textContent = navigator.onLine ? '✓ gespeichert' : '✓ wird übertragen';
@@ -1264,6 +1356,7 @@ function bindEvents() {
     if (id === 'filterSel') { ui.filter = e.target.value; refresh(); }
     if (id === 'dateInput' && e.target.value) { ui.day = e.target.value; renderPlan(); }
     if (id === 'statusSel') { ui.listStatus = e.target.value; renderList(); }
+    if (id === 'rangeSel') { ui.listRange = e.target.value; $('#pastToggle').closest('label').hidden = ui.listRange !== 'alle'; renderList(); }
     if (id === 'pastToggle') { ui.listPast = e.target.checked; renderList(); }
   };
   c.oninput = e => {

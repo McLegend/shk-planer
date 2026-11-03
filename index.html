@@ -49,9 +49,13 @@
     --banner: #fff4dc;
     --banner-text: #6b4a00;
     --card-shadow: 0 1px 3px rgba(0, 0, 0, .18);
+    --scroll: #c4cbd3;
+    color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      --scroll: #464c53;
+      color-scheme: dark;
       --bg: #16181a;
       --surface: #202326;
       --field: #2b2f33;
@@ -73,6 +77,11 @@
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Schmale, dezente Scrollbalken in der Farbe des Designs statt grellem Weiß */
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 8px; }
   html, body { margin: 0; height: 100%; }
   body {
     display: flex; flex-direction: column;
@@ -363,6 +372,24 @@
   .cust-btns .btn svg { width: 18px; height: 18px; fill: currentColor; }
   .tbl a { color: var(--blue); text-decoration: none; font-weight: 600; white-space: nowrap; }
   .tbl tr.editing td { background: var(--blue-soft); }
+  /* Liste: Überfällig / Offen / Erledigt abgrenzen */
+  .tbl tr.grp td {
+    padding: 18px 12px 6px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); background: none; border-bottom: 2px solid var(--line);
+  }
+  .tbl tr.grp:first-child td { padding-top: 8px; }
+  .tbl tr.grp-ueberfaellig td { color: var(--red); border-bottom-color: var(--red); }
+  .tbl tr.grp-erledigt td { color: var(--green); border-bottom-color: var(--green); }
+  .tbl tr.st-ueberfaellig td:first-child { box-shadow: inset 4px 0 0 var(--red); }
+  .tbl tr.st-ueberfaellig td { background: color-mix(in srgb, var(--red) 7%, transparent); }
+  .tbl tr.st-erledigt td:first-child { box-shadow: inset 4px 0 0 var(--green); }
+  .tbl tr.st-erledigt td { color: var(--muted); }
+  .tbl tr.st-erledigt td:not(:nth-child(3)) { opacity: .7; }
+  .inl {
+    font: inherit; color: inherit; background: var(--field); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 8px; margin: 0; min-height: 38px; width: auto; flex: 0 0 auto;
+  }
+  .inl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
   .cust-row { cursor: pointer; }
   .cust-row:hover td { background: var(--hover); }
   .cust-row:hover .cust-name { color: var(--blue); }
@@ -557,7 +584,7 @@
       </select></label>
     </div>
     <label class="field"><span>Notiz</span><textarea name="notiz" maxlength="1000" placeholder="z. B. Material, Zugang, Hinweise"></textarea></label>
-    <p class="hint">Die Endzeit trägt der Monteur automatisch ein, wenn er auf „Fertig“ tippt.</p>
+    <p class="hint">Die Endzeit trägt der Monteur automatisch ein, wenn er auf „Fertig“ tippt. Das Büro kann sie im Auftrag nachträglich ändern.</p>
     <p class="err" id="formErr"></p>
     <div class="factions">
       <button class="btn" type="button" data-close>Abbrechen</button>
