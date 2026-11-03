@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<title>Datenschutz – SHK-Planer</title>
+<style>
+  @font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 500 700; font-display: swap; src: url(fonts/montserrat-latin.woff2) format('woff2'); }
+  @font-face { font-family: 'Open Sans'; font-style: normal; font-weight: 400 700; font-display: swap; src: url(fonts/opensans-latin.woff2) format('woff2'); }
+  :root { --bg: #f4f6f9; --surface: #fff; --line: #dde2e8; --text: #2b2b2e; --muted: #58585b; --blue: #004f9e; --blue-soft: #e1ecf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181a; --surface: #202326; --line: #34393e; --text: #e6e8ea; --muted: #9aa1a8; --blue: #3d8ee0; --blue-soft: #14304f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 "Open Sans", -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: calc(24px + env(safe-area-inset-top)) 16px 48px; }
+  .card { background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.18); padding: 24px 22px; }
+  h1, h2 { font-family: Montserrat, "Open Sans", sans-serif; line-height: 1.25; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 16px; color: var(--blue); margin: 28px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  p, ul { margin: 0 0 10px; }
+  ul { padding-left: 20px; }
+  li { margin-bottom: 4px; }
+  a { color: var(--blue); overflow-wrap: anywhere; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .note { background: var(--blue-soft); padding: 12px 14px; margin: 14px 0; }
+  .back { display: inline-block; margin-bottom: 16px; font-weight: 600; text-decoration: none; font-family: Montserrat, sans-serif; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">← Zurück zum Planer</a>
+  <div class="card">
+    <h1>Datenschutzhinweise zum SHK-Planer</h1>
+    <p class="muted">Stand: November 2026</p>
+
+    <p>Der SHK-Planer ist eine interne Anwendung der HWK Haustechnik GmbH zur Einsatzplanung von Aufträgen. Er wird nur vom Büro und von unseren Monteuren genutzt. Diese Hinweise ergänzen unsere allgemeine
+      <a href="https://hwk-haustechnik.de/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</p>
+
+    <h2>1. Verantwortlicher</h2>
+    <p>HWK Haustechnik GmbH<br>Tullastr. 8, 79341 Kenzingen<br>
+      Telefon: 07644 87 21 – E-Mail: <a href="mailto:info@hwk-haustechnik.de">info@hwk-haustechnik.de</a><br>
+      Geschäftsführer: Viljem Mocnik, Rolf Weber</p>
+    <p>Ein Datenschutzbeauftragter ist nicht bestellt, da hierzu keine gesetzliche Pflicht besteht. Bei Fragen zum Datenschutz wenden Sie sich bitte an die oben genannten Kontaktdaten.</p>
+
+    <h2>2. Welche Daten verarbeitet werden</h2>
+    <p><b>Daten der Mitarbeiter</b></p>
+    <ul>
+      <li>Name und Mitarbeiternummer</li>
+      <li>Anmeldedaten: Nutzerkennung, Zeitpunkt der letzten Anmeldung; die PIN nur als Hashwert (siehe Abschnitt 7)</li>
+      <li>zugewiesene Aufträge, Termine und Team-Zuordnung</li>
+      <li>Status und Zeitpunkte „Angekommen“ und „Fertig“ je Auftrag</li>
+      <li>Arbeitsberichte zu Aufträgen</li>
+      <li>Abwesenheiten (Urlaub oder Krankheit, jeweils nur Art und Zeitraum – keine Diagnosen). Abwesenheiten sieht nur das Büro.</li>
+    </ul>
+    <p><b>Daten der Kunden</b></p>
+    <ul>
+      <li>Name, Anschrift und Telefonnummer</li>
+      <li>Auftragsbeschreibung, Notizen, Termin und Arbeitsbericht</li>
+    </ul>
+    <p><b>Technische Daten</b> beim Aufruf der Seite, z. B. IP-Adresse, Datum und Uhrzeit, Browser und Gerät (siehe Abschnitt 5).</p>
+    <p>Name und Mitarbeiternummer sind für die Nutzung des Planers erforderlich. Ohne diese Angaben können wir keine Aufträge zuteilen.</p>
+
+    <h2>3. Zweck</h2>
+    <p>Die Daten werden ausschließlich verarbeitet, um Aufträge zu planen und den Mitarbeitern zuzuteilen, die Durchführung der Aufträge zu dokumentieren und Aufträge abzurechnen.</p>
+    <div class="note">Der Planer dient <b>nicht</b> der Leistungs- oder Verhaltenskontrolle der Mitarbeiter. Es findet keine Standortortung statt, keine Auswertung oder Bewertung einzelner Mitarbeiter und keine automatisierte Entscheidung.</div>
+
+    <h2>4. Rechtsgrundlagen</h2>
+    <ul>
+      <li>Mitarbeiterdaten: Art. 6 Abs. 1 lit. b DSGVO (Durchführung des Beschäftigungsverhältnisses).</li>
+      <li>Abwesenheit wegen Krankheit (Gesundheitsdatum): Art. 9 Abs. 2 lit. b DSGVO i. V. m. § 26 Abs. 3 BDSG bzw. § 22 Abs. 1 Nr. 1 lit. a BDSG (Einsatzplanung, Entgeltfortzahlung nach dem Entgeltfortzahlungsgesetz).</li>
+      <li>Kundendaten: Art. 6 Abs. 1 lit. b DSGVO (Durchführung des Auftrags).</li>
+      <li>Aufbewahrung nach Abschluss eines Auftrags: Art. 6 Abs. 1 lit. c DSGVO i. V. m. § 147 AO und § 257 HGB sowie Art. 6 Abs. 1 lit. f DSGVO (Nachweis bei Gewährleistungsansprüchen).</li>
+      <li>Technische Daten und Speicherung auf dem Gerät: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einem sicheren und funktionsfähigen Betrieb) sowie § 25 Abs. 2 Nr. 2 TDDDG (technisch unbedingt erforderlich).</li>
+    </ul>
+
+    <h2>5. Eingesetzte Dienstleister</h2>
+    <p><b>Google Firebase</b> (Google Ireland Limited, Gordon House, Barrow Street, Dublin 4, Irland): Anmeldung und Speicherung der Planungsdaten (Datenbank). Google verarbeitet die Daten in unserem Auftrag auf Grundlage der Datenverarbeitungsbedingungen von Google (Art. 28 DSGVO). Google setzt dabei auch die Google LLC (USA) als Unterauftragsverarbeiter ein, insbesondere für die Anmeldung. Beim Start lädt der Planer zudem Programmbestandteile von Google-Servern (gstatic.com); dabei wird die IP-Adresse an Google übermittelt.</p>
+    <p><b>GitHub Pages</b> (GitHub, Inc., 88 Colin P. Kelly Jr. Street, San Francisco, CA 94107, USA): Bereitstellung der Webseite. GitHub verarbeitet beim Aufruf technische Daten wie die IP-Adresse, um die Seite auszuliefern und vor Angriffen zu schützen. Rechtsgrundlage ist unser berechtigtes Interesse an einer sicheren und zuverlässigen Bereitstellung (Art. 6 Abs. 1 lit. f DSGVO). Näheres in der
+      <a href="https://docs.github.com/de/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">Datenschutzerklärung von GitHub</a>.</p>
+    <p><b>Übermittlung in die USA:</b> Bei beiden Anbietern findet auch eine Verarbeitung in den USA statt. Google LLC und GitHub, Inc. sind nach dem EU-US Data Privacy Framework zertifiziert; die Übermittlung stützt sich auf den Angemessenheitsbeschluss der EU-Kommission (Art. 45 DSGVO) und bei Google ergänzend auf Standardvertragsklauseln (Art. 46 Abs. 2 lit. c DSGVO). Dennoch ist nicht auszuschließen, dass US-Behörden Zugriff auf Daten erhalten.</p>
+    <p><b>Navigation:</b> Tippt ein Mitarbeiter auf die Navigation zu einem Kunden, öffnet sich Google Maps bzw. Apple Karten mit der Kundenadresse. Erst dann werden Daten an diesen Anbieter übertragen. Google bzw. Apple verarbeiten diese Daten in eigener Verantwortung nach ihren eigenen Datenschutzbestimmungen.</p>
+
+    <h2>6. Speicherung auf dem Gerät</h2>
+    <p>Der Planer speichert auf dem Gerät nur, was für den Betrieb nötig ist: den Anmeldestatus, die Programmdateien und eine Kopie der Planungsdaten für die Nutzung ohne Internet. Es werden keine Cookies oder Werkzeuge für Werbung oder Statistik eingesetzt und kein Nutzungsverhalten ausgewertet.</p>
+
+    <h2>7. Wer hat Zugriff</h2>
+    <ul>
+      <li>Das Büro sieht alle Aufträge, Mitarbeiter und Abwesenheiten.</li>
+      <li>Jeder Monteur sieht nur seine eigenen Aufträge.</li>
+      <li>Die Verbindung ist verschlüsselt (HTTPS). PINs und Passwörter werden nur als Hashwert gespeichert. Sie können nicht zurückgerechnet werden und sind auch für uns nicht einsehbar.</li>
+    </ul>
+
+    <h2>8. Speicherdauer</h2>
+    <ul>
+      <li>Das Konto eines ausgeschiedenen Mitarbeiters löschen wir innerhalb eines Monats nach dem Austritt. Seine Zuordnung zu Aufträgen bleibt bis zur Löschung dieser Aufträge erhalten.</li>
+      <li>Abwesenheiten löschen wir spätestens 13 Monate nach ihrem Ende.</li>
+      <li>Auftragsdaten einschließlich Arbeitsberichten und Zeitpunkten löschen wir 5 Jahre nach Abschluss des Auftrags, da bis dahin Gewährleistungsansprüche bestehen können (§ 634a BGB). Soweit sie Teil von Buchungs- oder Abrechnungsunterlagen sind, bewahren wir sie bis zum Ablauf der gesetzlichen Fristen auf (§ 147 AO, § 257 HGB).</li>
+    </ul>
+
+    <h2>9. Ihre Rechte</h2>
+    <p>Sie haben das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung und Datenübertragbarkeit. Einzelheiten stehen in Abschnitt 11 unserer
+      <a href="https://hwk-haustechnik.de/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>. Wenden Sie sich dazu einfach an die oben genannten Kontaktdaten.</p>
+    <div class="note"><b>Widerspruchsrecht:</b> Soweit wir Daten auf Grundlage berechtigter Interessen verarbeiten (Art. 6 Abs. 1 lit. f DSGVO), können Sie aus Gründen, die sich aus Ihrer besonderen Situation ergeben, jederzeit widersprechen (Art. 21 DSGVO).</div>
+    <p>Sie haben außerdem das Recht auf Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Für uns zuständig ist der Landesbeauftragte für den Datenschutz und die Informationsfreiheit Baden-Württemberg, Lautenschlagerstraße 20, 70173 Stuttgart.</p>
+  </div>
+</main>
+</body>
+</html>

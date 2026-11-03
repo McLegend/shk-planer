@@ -197,14 +197,55 @@ function enterOffice() {
   $('#appView').hidden = false;
   ui.day = todayKey();
   ui.mode = lsGet('shk-mode') || 'day';
+  ui.purge = lsGet('shk-purge') !== todayKey() ? { jobs: false, abs: false } : null;
   ui.unsub.push(store.watchWorkers(ws => { ui.workers = ws; refresh(); }));
-  ui.unsub.push(store.watchAbsences(as => { ui.absences = as.sort((a, b) => a.von.localeCompare(b.von)); refresh(); }));
+  ui.unsub.push(store.watchAbsences(as => {
+    ui.absences = as.sort((a, b) => a.von.localeCompare(b.von));
+    refresh();
+    if (ui.purge) { ui.purge.abs = true; purgeOld(); }
+  }));
   ui.unsub.push(store.watchAllJobs(js => {
     ui.jobs = sortJobs(js);
     refresh();
     if ($('#detailDlg').open) renderDetail();
+    if (ui.purge) { ui.purge.jobs = true; purgeOld(); }
   }));
   setView(lsGet('shk-view') || 'plan');
+}
+
+// Löschfristen (stehen so in datenschutz.html): Abwesenheiten 13 Monate nach Ende,
+// Aufträge 5 Jahre nach dem Termin. Läuft einmal am Tag, wenn das Büro den Planer öffnet.
+const KEEP_ABS_MONTHS = 13, KEEP_JOB_MONTHS = 60;
+const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+const monthsAgo = m => { const d = new Date(); d.setMonth(d.getMonth() - m); return ymd(d); };
+
+function purgeOld() {
+  if (!ui.purge || !ui.purge.jobs || !ui.purge.abs) return;
+  ui.purge = null;
+  const jobCut = monthsAgo(KEEP_JOB_MONTHS), absCut = monthsAgo(KEEP_ABS_MONTHS);
+  const oldJobs = ui.jobs.filter(j => isDay(j.datum) && j.datum < jobCut);
+  const oldAbs = ui.absences.filter(a => isDay(a.bis) && a.bis < absCut);
+  if (oldJobs.length + oldAbs.length) {
+    // Schutz vor falsch gestellter Uhr: wenn auffällig viel weg soll, erst nachfragen
+    const many = oldJobs.length > 20 && oldJobs.length > ui.jobs.length / 2;
+    if (many && !confirm(`${oldJobs.length} von ${ui.jobs.length} Aufträgen sind laut Löschfrist älter als 5 Jahre.\n\nBitte prüfen, ob Datum und Uhrzeit dieses Geräts stimmen (heute: ${new Date().toLocaleDateString('de-DE')}).\n\nJetzt löschen?`)) return;
+    oldJobs.forEach(j => store.deleteJob(j.id));
+    oldAbs.forEach(a => store.deleteAbsence(a.id));
+    const parts = [];
+    if (oldJobs.length) parts.push(`${oldJobs.length} ${oldJobs.length === 1 ? 'Auftrag' : 'Aufträge'} älter als 5 Jahre`);
+    if (oldAbs.length) parts.push(`${oldAbs.length} ${oldAbs.length === 1 ? 'Abwesenheit' : 'Abwesenheiten'} älter als 13 Monate`);
+    notice(`Gemäß Löschfristen entfernt: ${parts.join(' und ')}.`);
+  }
+  lsSet('shk-purge', todayKey());
+}
+
+function notice(text) {
+  const el = document.createElement('div');
+  el.className = 'banner';
+  el.setAttribute('role', 'status');
+  el.textContent = text;
+  document.body.prepend(el);
+  setTimeout(() => el.remove(), 10000);
 }
 
 function setView(v) {
@@ -968,7 +1009,11 @@ function bindEvents() {
     if (go) { setView(go.dataset.go); return; }
     const del = e.target.closest('[data-del-worker]');
     if (del) {
-      if (confirm(`Mitarbeiter ${del.dataset.delWorker} entfernen? Seine Aufträge bleiben erhalten.`)) store.deleteWorker(del.dataset.delWorker);
+      if (confirm(`Mitarbeiter ${del.dataset.delWorker} entfernen? Seine Aufträge bleiben erhalten.`)) {
+        store.deleteWorker(del.dataset.delWorker);
+        if (store.mode === 'firebase') alert('Mitarbeiter entfernt.\n\nWichtig (Datenschutz): Bitte innerhalb eines Monats auch sein Anmeldekonto löschen:\nFirebase-Konsole → Authentication → Users → '
+          + `${del.dataset.delWorker}@mitarbeiter.shk-planer.com → Konto löschen.`);
+      }
       return;
     }
     // Klick in eine freie Stelle der Plantafel: neuer Auftrag für diesen Monteur
