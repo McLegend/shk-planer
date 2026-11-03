@@ -35,6 +35,8 @@ const ICONS = {
   notes: 'M3 18h12v-2H3v2zM3 6v2h18V6H3zm0 7h18v-2H3v2z',
   clock: 'M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z',
   info: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
+  edit: 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z',
+  trash: 'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z',
   map: 'M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z',
 };
 const icon = n => `<svg class="i" viewBox="0 0 24 24"><path d="${ICONS[n]}"/></svg>`;
@@ -118,7 +120,7 @@ function layoutLanes(list) {
 
 // ================= Zustand =================
 const ui = {
-  session: null, workers: [], jobs: [], absences: [], me: null, unsub: [], drag: null, suppressClick: false,
+  session: null, workers: [], jobs: [], absences: [], customers: [], custEdit: null, custSearch: '', formKundeId: null, me: null, unsub: [], drag: null, suppressClick: false,
   view: 'plan', mode: 'day', day: todayKey(), filter: '',
   listStatus: 'alle', listPast: false, search: '',
   wPage: 'termine', wTab: 'geplant',
@@ -156,7 +158,7 @@ function stopWatching() { ui.unsub.forEach(f => f && f()); ui.unsub = []; }
 // ================= Anmeldung =================
 function showLogin() {
   stopWatching();
-  ui.jobs = []; ui.workers = []; ui.absences = [];
+  ui.jobs = []; ui.workers = []; ui.absences = []; ui.customers = [];
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#appView').hidden = true;
   $('#workerView').hidden = true;
@@ -197,8 +199,15 @@ function enterOffice() {
   $('#appView').hidden = false;
   ui.day = todayKey();
   ui.mode = lsGet('shk-mode') || 'day';
-  ui.purge = lsGet('shk-purge') !== todayKey() ? { jobs: false, abs: false } : null;
+  ui.purge = lsGet('shk-purge') !== todayKey() ? { jobs: false, abs: false, cust: false } : null;
   ui.unsub.push(store.watchWorkers(ws => { ui.workers = ws; refresh(); }));
+  ui.unsub.push(store.watchCustomers(cs => {
+    ui.customers = cs.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+    fillCustomerList();
+    if (ui.view === 'kunden') renderCustomersPage();
+    if ($('#custDlg').open) renderCustomerDlg();
+    if (ui.purge) { ui.purge.cust = true; purgeOld(); }
+  }));
   ui.unsub.push(store.watchAbsences(as => {
     ui.absences = as.sort((a, b) => a.von.localeCompare(b.von));
     refresh();
@@ -208,33 +217,38 @@ function enterOffice() {
     ui.jobs = sortJobs(js);
     refresh();
     if ($('#detailDlg').open) renderDetail();
+    if ($('#custDlg').open) renderCustomerDlg();
     if (ui.purge) { ui.purge.jobs = true; purgeOld(); }
   }));
   setView(lsGet('shk-view') || 'plan');
 }
 
 // Löschfristen (stehen so in datenschutz.html): Abwesenheiten 13 Monate nach Ende,
-// Aufträge 5 Jahre nach dem Termin. Läuft einmal am Tag, wenn das Büro den Planer öffnet.
+// Aufträge 5 Jahre nach dem Termin, Kunden 5 Jahre nach dem letzten Auftrag (ohne Auftrag: nach Anlage).
+// Läuft einmal am Tag, wenn das Büro den Planer öffnet.
 const KEEP_ABS_MONTHS = 13, KEEP_JOB_MONTHS = 60;
 const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const monthsAgo = m => { const d = new Date(); d.setMonth(d.getMonth() - m); return ymd(d); };
 
 function purgeOld() {
-  if (!ui.purge || !ui.purge.jobs || !ui.purge.abs) return;
+  if (!ui.purge || !ui.purge.jobs || !ui.purge.abs || !ui.purge.cust) return;
   ui.purge = null;
   const jobCut = monthsAgo(KEEP_JOB_MONTHS), absCut = monthsAgo(KEEP_ABS_MONTHS);
   const oldJobs = ui.jobs.filter(j => isDay(j.datum) && j.datum < jobCut);
   const oldAbs = ui.absences.filter(a => isDay(a.bis) && a.bis < absCut);
-  if (oldJobs.length + oldAbs.length) {
+  const oldCust = ui.customers.filter(c => { const l = lastUse(c); return isDay(l) && l < jobCut; });
+  if (oldJobs.length + oldAbs.length + oldCust.length) {
     // Schutz vor falsch gestellter Uhr: wenn auffällig viel weg soll, erst nachfragen
     const many = oldJobs.length > 20 && oldJobs.length > ui.jobs.length / 2;
     if (many && !confirm(`${oldJobs.length} von ${ui.jobs.length} Aufträgen sind laut Löschfrist älter als 5 Jahre.\n\nBitte prüfen, ob Datum und Uhrzeit dieses Geräts stimmen (heute: ${new Date().toLocaleDateString('de-DE')}).\n\nJetzt löschen?`)) return;
     oldJobs.forEach(j => store.deleteJob(j.id));
     oldAbs.forEach(a => store.deleteAbsence(a.id));
+    oldCust.forEach(c => store.deleteCustomer(c.id));
     const parts = [];
     if (oldJobs.length) parts.push(`${oldJobs.length} ${oldJobs.length === 1 ? 'Auftrag' : 'Aufträge'} älter als 5 Jahre`);
     if (oldAbs.length) parts.push(`${oldAbs.length} ${oldAbs.length === 1 ? 'Abwesenheit' : 'Abwesenheiten'} älter als 13 Monate`);
-    notice(`Gemäß Löschfristen entfernt: ${parts.join(' und ')}.`);
+    if (oldCust.length) parts.push(`${oldCust.length} ${oldCust.length === 1 ? 'Kunde' : 'Kunden'} ohne Auftrag seit 5 Jahren`);
+    notice(`Gemäß Löschfristen entfernt: ${parts.join(', ')}.`);
   }
   lsSet('shk-purge', todayKey());
 }
@@ -287,6 +301,32 @@ function setView(v) {
         <tbody id="listBody"></tbody></table></div>
       <div class="count" id="listCount"></div>`;
     $('#statusSel').value = ui.listStatus;
+  } else if (v === 'kunden') {
+    ui.custEdit = null;
+    c.innerHTML = `
+      <div class="page-head"><h1>Kunden</h1>
+        <label class="search">${icon('search')}<input id="custSearch" placeholder="Kunde suchen" value="${esc(ui.custSearch)}"></label></div>
+      <div class="card">
+        <h2 id="custFormTitle">Neuen Kunden anlegen</h2>
+        <form id="custForm" class="cust-form">
+          <label class="field c2"><span>Name *</span><input name="name" required maxlength="100"></label>
+          <label class="field c2"><span>Telefon</span><input name="telefon" type="tel" maxlength="40"></label>
+          <label class="field c2"><span>Straße und Hausnummer</span><input name="strasse" maxlength="120" autocomplete="off"></label>
+          <label class="field"><span>PLZ</span><input name="plz" inputmode="numeric" maxlength="10" autocomplete="off"></label>
+          <label class="field"><span>Ort</span><input name="ort" maxlength="80" autocomplete="off"></label>
+          <label class="field c4"><span>Hinweis für Aufträge</span><input name="notiz" maxlength="200" placeholder="z. B. Schlüssel beim Nachbarn, Zugang über Hof"></label>
+          <div class="c4 cust-actions">
+            <button type="button" class="btn" id="custCancel" hidden>Abbrechen</button>
+            <button class="btn primary">${icon('add')}<span id="custSaveLbl">Anlegen</span></button>
+          </div>
+        </form>
+        <p class="err" id="custErr" style="margin-top:8px"></p>
+        <p class="hint">Nur speichern, was für Aufträge nötig ist – keine privaten oder gesundheitlichen Angaben. Kunden ohne Auftrag seit 5 Jahren werden automatisch gelöscht.</p>
+      </div>
+      <div class="table-wrap"><table class="tbl">
+        <thead><tr><th>Kunde</th><th class="hide-t">Adresse</th><th class="hide-t">Telefon</th><th>Letzter Auftrag</th><th></th></tr></thead>
+        <tbody id="custBody"></tbody></table></div>
+      <div class="count" id="custCount"></div>`;
   } else {
     c.innerHTML = `
       <div class="page-head"><h1>Mitarbeiter</h1></div>
@@ -334,6 +374,7 @@ function refresh() {
   }
   if (ui.view === 'plan') renderPlan();
   else if (ui.view === 'list') renderList();
+  else if (ui.view === 'kunden') renderCustomersPage();
   else renderWorkersPage();
 }
 
@@ -497,6 +538,166 @@ function renderWorkersPage() {
       <td class="b">${a.von === a.bis ? fmt(a.von) : `${fmt(a.von)} – ${fmt(a.bis)}`}</td>
       <td style="text-align:right"><button class="btn danger" data-del-abs="${esc(a.id)}">Löschen</button></td></tr>`).join('')
     : '<tr><td colspan="4" class="sub" style="text-align:center;padding:24px">Kein Urlaub und keine Krankmeldung eingetragen.</td></tr>';
+}
+
+// ================= Kunden =================
+const custAddress = c => [c.strasse, [c.plz, c.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+const maxDay = (...ds) => ds.filter(isDay).sort().pop() || '';
+// Letzter Auftrag eines Kunden (auch geplante); für die Löschfrist zählt sonst das Anlagedatum
+const lastJobOf = c => maxDay(c.zuletzt, ...ui.jobs.filter(j => j.kundeId === c.id).map(j => j.datum));
+const lastUse = c => maxDay(c.angelegt, lastJobOf(c));
+const sameName = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+
+function renderCustomersPage() {
+  const tb = $('#custBody');
+  if (!tb) return;
+  const q = ui.custSearch.trim().toLowerCase();
+  const rows = ui.customers.filter(c => !q || [c.name, c.strasse, c.plz, c.ort, c.telefon].join(' ').toLowerCase().includes(q));
+  tb.innerHTML = rows.length ? rows.map(c => {
+    const last = lastJobOf(c);
+    return `<tr class="cust-row${ui.custEdit === c.id ? ' editing' : ''}" data-cust-open="${esc(c.id)}" title="Kunde und Aufträge anzeigen">
+      <td><b class="cust-name">${esc(c.name)}</b>${c.notiz ? `<div class="sub">${esc(c.notiz)}</div>` : ''}<div class="sub show-t">${esc([custAddress(c), c.telefon].filter(Boolean).join(' · '))}</div></td>
+      <td class="hide-t">${esc(custAddress(c))}</td>
+      <td class="hide-t">${c.telefon ? `<a href="tel:${esc(c.telefon.replace(/[^0-9+]/g, ''))}">${esc(c.telefon)}</a>` : ''}</td>
+      <td>${last ? parseYmd(last).toLocaleDateString('de-DE') : '<span class="sub">–</span>'}</td>
+      <td class="cust-btns"><div>
+        <button class="btn" data-cust-job="${esc(c.id)}" title="Neuen Auftrag für diesen Kunden">${icon('add')}Auftrag</button>
+        <button class="btn ico" data-cust-edit="${esc(c.id)}" title="Bearbeiten" aria-label="${esc(c.name)} bearbeiten">${icon('edit')}</button>
+        <button class="btn ico danger" data-cust-del="${esc(c.id)}" title="Löschen" aria-label="${esc(c.name)} löschen">${icon('trash')}</button></div></td></tr>`;
+  }).join('') : `<tr><td colspan="5" class="sub" style="text-align:center;padding:30px">${q ? 'Kein Kunde gefunden.' : 'Noch keine Kunden angelegt.'}</td></tr>`;
+  $('#custCount').textContent = `${rows.length} ${rows.length === 1 ? 'Kunde' : 'Kunden'}`;
+}
+
+// Alle Aufträge eines Kunden: verknüpfte sowie ältere ohne Verknüpfung mit gleichem Namen UND gleicher Straße.
+// Team-Aufträge (ein Eintrag je Monteur) erscheinen nur einmal.
+function jobsOfCustomer(c) {
+  const hits = ui.jobs.filter(j => j.kundeId === c.id
+    || (!j.kundeId && sameName(j.kunde, c.name) && sameName(j.strasse, c.strasse)));
+  const seen = new Map();
+  for (const j of hits) {
+    const key = j.gruppe || j.id;
+    if (!seen.has(key)) seen.set(key, { job: j, nrs: [] });
+    seen.get(key).nrs.push(j.mitarbeiter);
+  }
+  return [...seen.values()].sort((a, b) => (b.job.datum + b.job.von).localeCompare(a.job.datum + a.job.von));
+}
+
+function openCustomer(id) {
+  ui.custView = id;
+  renderCustomerDlg();
+  if (!$('#custDlg').open) $('#custDlg').showModal();
+}
+
+function renderCustomerDlg() {
+  const dlg = $('#custDlg');
+  const c = ui.customers.find(x => x.id === ui.custView);
+  if (!c) { if (dlg.open) dlg.close(); return; }
+  const list = jobsOfCustomer(c);
+  const t = todayKey();
+  const past = list.filter(e => e.job.datum <= t), next = list.filter(e => e.job.datum > t).pop();
+  const fmt = k => parseYmd(k).toLocaleDateString('de-DE');
+  const summary = list.length
+    ? `${list.length} ${list.length === 1 ? 'Auftrag' : 'Aufträge'}${past.length ? ` · zuletzt am ${fmt(past[0].job.datum)}` : ''}${next ? ` · nächster Termin ${fmt(next.job.datum)}` : ''}`
+    : 'Noch keine Aufträge';
+  const item = ({ job: j, nrs }) => {
+    const rep = (j.bericht || '').trim();
+    return `<button class="hist-item" data-id="${esc(j.id)}">
+      <span class="hist-date"><b>${fmt(j.datum)}</b><span class="sub">${esc(j.von)} Uhr</span></span>
+      <span class="hist-main"><b>${esc(j.auftrag || 'Auftrag')}</b>
+        <span class="sub">${esc(nrs.map(workerName).join(', '))}</span>
+        ${rep ? `<span class="hist-rep">${esc(rep.length > 120 ? rep.slice(0, 120) + ' …' : rep)}</span>` : ''}</span>
+      ${badge(j)}</button>`;
+  };
+  $('#custDlgBody').innerHTML = `
+    <div class="sh-top"><button class="sh-back" data-close aria-label="Schließen">${icon('back')}</button></div>
+    <div class="sh-body">
+      <h2>${esc(c.name)}</h2>
+      <div class="sec">
+        <div class="sec-head"><p class="sec-title">Kontakt</p></div>
+        ${custAddress(c) ? `<div class="row">${icon('place')}<div>${esc(custAddress(c))}</div></div>` : ''}
+        ${c.telefon ? `<div class="row">${icon('phone')}<div><a href="tel:${esc(c.telefon.replace(/[^\d+]/g, ''))}">${esc(c.telefon)}</a></div></div>` : ''}
+        ${c.notiz ? `<div class="row">${icon('notes')}<div>${esc(c.notiz)}</div></div>` : ''}
+      </div>
+      <div class="sh-actions">
+        <button class="btn" data-cdlg="edit">${icon('edit')}Bearbeiten</button>
+        <button class="btn primary" data-cdlg="job">${icon('add')}Neuer Auftrag</button>
+      </div>
+      <div class="sec">
+        <div class="sec-head"><p class="sec-title">Aufträge</p></div>
+        <p class="hint" style="margin:8px 0 2px">${summary}</p>
+        <div class="hist">${list.map(item).join('')}</div>
+      </div>
+    </div>`;
+}
+
+function editCustomer(id) {
+  const c = ui.customers.find(x => x.id === id), f = $('#custForm');
+  if (!c || !f) return;
+  ui.custEdit = id;
+  for (const k of ['name', 'telefon', 'strasse', 'plz', 'ort', 'notiz']) f.elements[k].value = c[k] || '';
+  $('#custFormTitle').textContent = `Kunde bearbeiten: ${c.name}`;
+  $('#custSaveLbl').textContent = 'Speichern';
+  $('#custCancel').hidden = false;
+  $('#custErr').textContent = '';
+  renderCustomersPage();
+  f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  f.elements.name.focus();
+}
+
+function resetCustomerForm() {
+  const f = $('#custForm');
+  if (!f) return;
+  ui.custEdit = null;
+  f.reset();
+  $('#custFormTitle').textContent = 'Neuen Kunden anlegen';
+  $('#custSaveLbl').textContent = 'Anlegen';
+  $('#custCancel').hidden = true;
+  $('#custErr').textContent = '';
+  renderCustomersPage();
+}
+
+async function saveCustomer(e) {
+  const f = e.target, err = $('#custErr');
+  const v = k => f.elements[k].value.trim();
+  const data = { name: v('name'), telefon: v('telefon'), strasse: v('strasse'), plz: v('plz'), ort: v('ort'), notiz: v('notiz') };
+  err.textContent = '';
+  if (!data.name) { err.textContent = 'Bitte einen Namen eingeben.'; return; }
+  const dup = ui.customers.find(c => c.id !== ui.custEdit && sameName(c.name, data.name) && sameName(c.strasse, data.strasse));
+  if (dup && !confirm(`„${dup.name}“ mit dieser Adresse gibt es schon. Trotzdem speichern?`)) return;
+  const btn = f.querySelector('.primary'); btn.disabled = true;
+  try {
+    if (ui.custEdit) await store.updateCustomer(ui.custEdit, data);
+    else store.addCustomer({ ...data, angelegt: todayKey(), zuletzt: null });
+    resetCustomerForm();
+  } catch (x) { err.textContent = 'Speichern fehlgeschlagen.'; }
+  finally { btn.disabled = false; }
+}
+
+// Vorschläge im Auftragsformular
+function fillCustomerList() {
+  const dl = $('#kundenList');
+  if (!dl) return;
+  dl.innerHTML = ui.customers.map(c => `<option value="${esc(c.name)}">${esc(custAddress(c))}</option>`).join('');
+}
+
+// Kundenfeld im Auftrag: passt der Name genau zu einem Kunden, wird er verknüpft (und ggf. ausgefüllt)
+function matchFormCustomer(fill) {
+  const f = $('#jobForm');
+  const hits = ui.customers.filter(c => sameName(c.name, f.elements.kunde.value));
+  const c = hits.length === 1 ? hits[0] : null;
+  ui.formKundeId = c ? c.id : null;
+  if (c && fill) {
+    for (const k of ['telefon', 'strasse', 'plz', 'ort']) f.elements[k].value = c[k] || '';
+    if (c.notiz && !f.elements.notiz.value.trim()) f.elements.notiz.value = c.notiz;
+  }
+  updateCustomerHint();
+}
+
+function updateCustomerHint() {
+  const f = $('#jobForm');
+  const linked = ui.customers.find(c => c.id === ui.formKundeId);
+  $('#custLinked').hidden = !linked;
+  $('#custSaveWrap').hidden = !!linked || !f.elements.kunde.value.trim();
 }
 
 async function addAbsence(e) {
@@ -732,8 +933,13 @@ function openForm(job, preset = {}) {
   $('#m2wrap').hidden = !team[1];
   $('#m3wrap').hidden = !team[2];
   $('#addTeam').hidden = !!team[2];
-  const data = job || { datum: preset.day || ui.day, von: preset.time || '08:00' };
+  const pk = preset.kunde;
+  const data = job || { datum: preset.day || ui.day, von: preset.time || '08:00',
+    ...(pk ? { kunde: pk.name, telefon: pk.telefon, strasse: pk.strasse, plz: pk.plz, ort: pk.ort, notiz: pk.notiz } : {}) };
   for (const k of ['kunde', 'auftrag', 'datum', 'telefon', 'von', 'strasse', 'plz', 'ort', 'notiz']) f.elements[k].value = data[k] || '';
+  ui.formKundeId = job ? (job.kundeId || null) : (pk ? pk.id : null);
+  if (!ui.formKundeId) matchFormCustomer(false); else updateCustomerHint();
+  f.elements.saveCust.checked = false;
   f.elements.dauer.value = data.dauer ? String(data.dauer) : '';
   if (f.elements.dauer.value === '' && data.dauer) { // ungewöhnlicher Wert: als Option ergänzen
     f.elements.dauer.insertAdjacentHTML('beforeend', `<option value="${Number(data.dauer)}">${duration(Number(data.dauer))}</option>`);
@@ -793,6 +999,14 @@ async function saveForm(e) {
     telefon: v('telefon'), strasse: v('strasse'), plz: v('plz'), ort: v('ort'), notiz: v('notiz'),
     dauer: Number(v('dauer')) || null,
   };
+  // Verknüpfung mit der Kundenliste (oder neuen Kunden anlegen, wenn angehakt)
+  const linked = ui.customers.find(c => c.id === ui.formKundeId);
+  let newCustomer = null;
+  if (!linked && f.elements.saveCust.checked && shared.kunde) {
+    newCustomer = { name: shared.kunde, telefon: shared.telefon, strasse: shared.strasse, plz: shared.plz, ort: shared.ort,
+      notiz: '', angelegt: todayKey(), zuletzt: shared.datum };
+  }
+  shared.kundeId = linked ? linked.id : null;
   const fresh = nr => ({ ...shared, mitarbeiter: nr, mitarbeiterUid: worker(nr)?.uid || null, status: 'offen', fertigAm: null });
   const ops = [];
 
@@ -822,7 +1036,7 @@ async function saveForm(e) {
       if (!d) { ops.push(() => store.addJob({ ...fresh(nr), ...extra })); return; }
       const data = { ...shared, ...extra };
       if (d.mitarbeiter !== nr) Object.assign(data, { mitarbeiter: nr, mitarbeiterUid: worker(nr)?.uid || null });
-      ops.push(() => store.updateJob(d.id, data));
+      ops.push(() => store.updateJob(d.id, { ...data, kundeId: shared.kundeId }));
     });
     removed.forEach(g => ops.push(() => store.deleteJob(g.id)));
   }
@@ -831,7 +1045,9 @@ async function saveForm(e) {
   btn.disabled = true;
   const data = shared;
   try {
+    if (newCustomer) shared.kundeId = store.addCustomer(newCustomer);
     await Promise.all(ops.map(op => op()));
+    if (linked && isDay(shared.datum) && (!linked.zuletzt || shared.datum > linked.zuletzt)) store.updateCustomer(linked.id, { zuletzt: shared.datum });
     $('#formDlg').close();
     ui.day = data.datum;
     refresh();
@@ -992,6 +1208,22 @@ function bindEvents() {
     if (ui.suppressClick) return; // Klick direkt nach dem Verschieben ignorieren
     const delAbs = e.target.closest('[data-del-abs]');
     if (delAbs) { if (confirm('Eintrag löschen?')) store.deleteAbsence(delAbs.dataset.delAbs); return; }
+    const cJob = e.target.closest('[data-cust-job]');
+    if (cJob) { openForm(null, { day: todayKey(), kunde: ui.customers.find(x => x.id === cJob.dataset.custJob) }); return; }
+    const cEdit = e.target.closest('[data-cust-edit]');
+    if (cEdit) { editCustomer(cEdit.dataset.custEdit); return; }
+    const cDel = e.target.closest('[data-cust-del]');
+    if (cDel) {
+      const k = ui.customers.find(x => x.id === cDel.dataset.custDel);
+      if (k && confirm(`„${k.name}“ aus der Kundenliste löschen?\n\nBestehende Aufträge bleiben erhalten.`)) {
+        if (ui.custEdit === k.id) resetCustomerForm();
+        store.deleteCustomer(k.id);
+      }
+      return;
+    }
+    if (e.target.closest('#custCancel')) { resetCustomerForm(); return; }
+    const cOpen = e.target.closest('[data-cust-open]');
+    if (cOpen && !e.target.closest('a, button')) { openCustomer(cOpen.dataset.custOpen); return; }
     const job = e.target.closest('[data-id]');
     if (job) { openDetail(job.dataset.id); return; }
     const act = e.target.closest('[data-act]');
@@ -1034,10 +1266,25 @@ function bindEvents() {
     if (id === 'statusSel') { ui.listStatus = e.target.value; renderList(); }
     if (id === 'pastToggle') { ui.listPast = e.target.checked; renderList(); }
   };
-  c.oninput = e => { if (e.target.id === 'searchIn') { ui.search = e.target.value; renderList(); } };
+  c.oninput = e => {
+    if (e.target.id === 'searchIn') { ui.search = e.target.value; renderList(); }
+    if (e.target.id === 'custSearch') { ui.custSearch = e.target.value; renderCustomersPage(); }
+  };
   c.onsubmit = e => {
+    if (e.target.id === 'custForm') { e.preventDefault(); saveCustomer(e); }
     if (e.target.id === 'addWorkerForm') { e.preventDefault(); addWorker(e); }
     if (e.target.id === 'addAbsForm') { e.preventDefault(); addAbsence(e); }
+  };
+
+  // Kunde mit Auftragsverlauf
+  $('#custDlg').onclick = e => {
+    const job = e.target.closest('[data-id]');
+    if (job) { openDetail(job.dataset.id); return; }
+    const a = e.target.closest('[data-cdlg]')?.dataset.cdlg;
+    const c = ui.customers.find(x => x.id === ui.custView);
+    if (!a || !c) return;
+    if (a === 'job') openForm(null, { day: todayKey(), kunde: c });
+    if (a === 'edit') { $('#custDlg').close(); editCustomer(c.id); }
   };
 
   // Monteur
@@ -1055,7 +1302,11 @@ function bindEvents() {
   // Formular
   $('#jobForm').onsubmit = saveForm;
   const watched = ['mitarbeiter', 'mitarbeiter2', 'mitarbeiter3', 'datum', 'von', 'dauer'];
-  $('#jobForm').addEventListener('input', e => { if (watched.includes(e.target.name)) checkConflict(); });
+  $('#jobForm').addEventListener('input', e => {
+    if (watched.includes(e.target.name)) checkConflict();
+    // Auswahl aus der Vorschlagsliste füllt Telefon und Adresse aus
+    if (e.target.name === 'kunde') matchFormCustomer(!e.inputType || e.inputType === 'insertReplacementText');
+  });
   $('#jobForm').addEventListener('change', e => { if (watched.includes(e.target.name)) checkConflict(); });
   $('#addTeam').onclick = () => {
     const next = $('#m2wrap').hidden ? '#m2wrap' : '#m3wrap';

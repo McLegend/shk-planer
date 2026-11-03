@@ -30,6 +30,7 @@ function demoStore() {
   const write = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} emit(); };
   if (!db || !db.workers) { db = seed(); write(); }
   if (!db.absences) db.absences = {};
+  if (!db.customers) db.customers = seedCustomers();
   // Änderungen aus anderen Tabs übernehmen
   addEventListener('storage', e => { if (e.key === KEY) { db = read() || db; emit(); } });
   const sub = f => { listeners.add(f); f(); return () => listeners.delete(f); };
@@ -89,6 +90,23 @@ function demoStore() {
       db.absences[id] = { ...a, id }; write();
     },
     async deleteAbsence(id) { delete db.absences[id]; write(); },
+    // Kundenliste (nur Büro)
+    watchCustomers(cb) { return sub(() => cb(Object.values(db.customers))); },
+    addCustomer(c) {
+      const id = 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      db.customers[id] = { ...c, id }; write();
+      return id;
+    },
+    async updateCustomer(id, data) { if (db.customers[id]) { db.customers[id] = { ...db.customers[id], ...data }; write(); } },
+    async deleteCustomer(id) { delete db.customers[id]; write(); },
+  };
+}
+
+function seedCustomers() {
+  const t = new Date(), today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  return {
+    k1: { id: 'k1', name: 'Familie Schneider', telefon: '07621 000000', strasse: 'Musterstraße 12', plz: '79539', ort: 'Lörrach', notiz: 'Schlüssel beim Nachbarn', angelegt: today, zuletzt: null },
+    k2: { id: 'k2', name: 'Autohaus Berger', telefon: '', strasse: 'Gewerbestraße 8', plz: '79576', ort: 'Weil am Rhein', notiz: '', angelegt: today, zuletzt: null },
   };
 }
 
@@ -221,6 +239,15 @@ async function firebaseStore() {
     watchAbsences(cb) { return list(F.collection(db, 'abwesenheiten'), cb); },
     addAbsence: a => queued(F.addDoc(F.collection(db, 'abwesenheiten'), a)),
     deleteAbsence: id => queued(F.deleteDoc(F.doc(db, 'abwesenheiten', id))),
+    // Kundenliste (nur Büro). Die ID entsteht sofort, damit sie auch ohne Netz im Auftrag landet.
+    watchCustomers(cb) { return list(F.collection(db, 'kunden'), cb); },
+    addCustomer(c) {
+      const ref = F.doc(F.collection(db, 'kunden'));
+      queued(F.setDoc(ref, c));
+      return ref.id;
+    },
+    updateCustomer: (id, data) => queued(F.updateDoc(F.doc(db, 'kunden', id), data)),
+    deleteCustomer: id => queued(F.deleteDoc(F.doc(db, 'kunden', id))),
     async addWorker(nr, name, pin) {
       const ref = F.doc(db, 'mitarbeiter', nr);
       if ((await F.getDoc(ref)).exists()) throw new Error('Diese Nummer gibt es schon.');

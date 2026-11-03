@@ -352,6 +352,35 @@
   .wk-cell.abs { background: repeating-linear-gradient(135deg, rgba(88, 88, 91, .13) 0 10px, rgba(88, 88, 91, .05) 10px 20px), var(--lane); }
   .wk-cell .abs-tag { justify-self: start; margin: 0; }
   .add-abs { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap: 10px; align-items: end; }
+  .cust-form { display: grid; grid-template-columns: 2fr 1fr 110px 1fr; gap: 10px; align-items: end; }
+  .cust-form .c2 { grid-column: span 2; }
+  .cust-form .c4 { grid-column: 1 / -1; }
+  .cust-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .cust-btns { width: 1%; }
+  .cust-btns > div { display: flex; justify-content: flex-end; gap: 4px; }
+  .cust-btns .btn { padding: 7px 10px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+  .cust-btns .btn.ico { padding: 7px; }
+  .cust-btns .btn svg { width: 18px; height: 18px; fill: currentColor; }
+  .tbl a { color: var(--blue); text-decoration: none; font-weight: 600; white-space: nowrap; }
+  .tbl tr.editing td { background: var(--blue-soft); }
+  .cust-row { cursor: pointer; }
+  .cust-row:hover td { background: var(--hover); }
+  .cust-row:hover .cust-name { color: var(--blue); }
+  .hist { display: grid; }
+  .hist-item {
+    display: grid; grid-template-columns: 86px 1fr auto; gap: 12px; align-items: start; text-align: left;
+    padding: 10px 6px; border: 0; border-bottom: 1px solid var(--line); background: none; color: inherit; font: inherit; cursor: pointer;
+  }
+  .hist-item:hover { background: var(--hover); }
+  .hist-date, .hist-main { display: grid; gap: 2px; min-width: 0; }
+  .hist-main b { overflow-wrap: anywhere; }
+  .hist-rep { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .sh-actions .btn { display: inline-flex; align-items: center; gap: 4px; }
+  .sh-actions .btn svg { width: 18px; height: 18px; fill: currentColor; }
+  .cust-linked { font-style: normal; color: var(--green); font-weight: 600; margin-left: 6px; }
+  .save-cust { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: -4px; cursor: pointer; }
+  .show-t { display: none; }
+  @media (max-width: 1100px) { .hide-t { display: none; } .show-t { display: block; } }
 
   /* Schmale Bildschirme */
   @media (max-width: 760px) {
@@ -376,6 +405,8 @@
     .add-worker .wide { grid-column: span 2; }
     .add-abs { grid-template-columns: 1fr 1fr; }
     .add-abs .wide { grid-column: span 2; }
+    .cust-form { grid-template-columns: 1fr 1fr; }
+    .cust-btns .btn { padding: 7px 8px; font-size: 12px; }
     .g3 { grid-template-columns: 1fr 1fr; }
     .g3 .wide-m { grid-column: span 2; }
     .sheet { width: 100vw; max-width: 100vw; height: 100%; max-height: 100%; margin: 0; border-radius: 0; }
@@ -442,6 +473,7 @@
     <button class="nav" data-view="list"><svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>Liste</button>
     <div class="nav-label">Verwaltung</div>
     <button class="nav" data-view="workers"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>Mitarbeiter</button>
+    <button class="nav" data-view="kunden"><svg viewBox="0 0 24 24"><path d="M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z"/></svg>Kunden</button>
     <div class="side-foot">
       <div class="me"><span class="av" style="background:#cfe3f7">BÜ</span>Büro</div>
       <button class="nav" id="pwBtn"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/></svg>Passwort ändern</button>
@@ -478,6 +510,9 @@
   </form>
 </dialog>
 
+<!-- Kunde mit Auftragsverlauf -->
+<dialog class="sheet" id="custDlg"><div id="custDlgBody"></div></dialog>
+
 <!-- Termin-Detail -->
 <dialog class="sheet" id="detailDlg"><div id="detailBody"></div></dialog>
 
@@ -499,7 +534,7 @@
     <p class="conflict" id="conflict"></p>
     <div class="fsec">Kunde</div>
     <div class="g2">
-      <label class="field"><span>Kunde *</span><input name="kunde" required maxlength="100"></label>
+      <label class="field"><span>Kunde * <em class="cust-linked" id="custLinked" hidden>✓ aus Kundenliste</em></span><input name="kunde" required maxlength="100" list="kundenList" autocomplete="off"></label>
       <label class="field"><span>Telefon</span><input name="telefon" type="tel" maxlength="40"></label>
     </div>
     <div class="g-addr">
@@ -507,6 +542,8 @@
       <label class="field"><span>PLZ</span><input name="plz" inputmode="numeric" maxlength="10" autocomplete="off"></label>
       <label class="field"><span>Ort</span><input name="ort" maxlength="80" autocomplete="off"></label>
     </div>
+    <datalist id="kundenList"></datalist>
+    <label class="save-cust" id="custSaveWrap" hidden><input type="checkbox" name="saveCust"> Kunde in die Kundenliste übernehmen</label>
     <div class="fsec">Termindetails</div>
     <label class="field"><span>Auftrag</span><input name="auftrag" maxlength="150" placeholder="z. B. Heizungswartung"></label>
     <div class="g3">
