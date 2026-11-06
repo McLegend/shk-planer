@@ -1,7 +1,7 @@
 // Service Worker: hält die App-Dateien auf dem Gerät bereit, damit der Planer auch ohne Netz startet.
 // Eigene Dateien: erst aus dem Netz (damit Updates sofort ankommen), ohne Netz aus dem Speicher.
 // Firebase-Bibliothek: feste Version, daher direkt aus dem Speicher.
-const CACHE = 'shk-planer-v7';
+const CACHE = 'shk-planer-v8';
 const FILES = [
   './', './index.html', './datenschutz.html','./app.js', './store.js', './firebase-config.js', './manifest.webmanifest',
   './logo.svg', './icon-180.png', './icon-192.png', './icon-512.png',

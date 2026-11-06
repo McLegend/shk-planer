@@ -46,6 +46,7 @@
     --blue-soft: #e1ecf7;
     --red: #e10712;
     --green: #2e9e5b;
+    --orange: #e88a00;
     --banner: #fff4dc;
     --banner-text: #6b4a00;
     --card-shadow: 0 1px 3px rgba(0, 0, 0, .18);
@@ -71,6 +72,7 @@
       --blue-soft: #14304f;
       --red: #ff4a52;
       --green: #3fb873;
+      --orange: #f29a2e;
       --banner: #3a2f12;
       --banner-text: #f3d68a;
       --card-shadow: 0 1px 3px rgba(0, 0, 0, .6);
@@ -335,6 +337,25 @@
   .st-vorort .dot { background: #e88a00; }
   .btn.outline { background: none; color: var(--blue); box-shadow: inset 0 0 0 2px var(--blue); }
 
+  /* Dauert länger: Drehuhr für den Monteur, Hinweise fürs Büro */
+  .btn.orange { background: var(--orange); color: #fff; }
+  .btn.outline.orange { background: none; color: var(--orange); box-shadow: inset 0 0 0 2px var(--orange); }
+  #extDial { width: min(260px, 78vw); height: auto; display: block; margin: 0 auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
+  #extDial.drag { cursor: grabbing; }
+  .ext-track, .ext-lap, .ext-arc { fill: none; stroke-width: 14; }
+  .ext-track { stroke: var(--field); }
+  .ext-lap { stroke: var(--orange); stroke-opacity: .35; }
+  .ext-arc { stroke: var(--orange); stroke-linecap: round; }
+  .ext-tick { stroke: var(--muted); stroke-linecap: round; }
+  .ext-knob { fill: var(--surface); stroke: var(--orange); stroke-width: 4; }
+  .ext-mid { font: 700 30px Montserrat, "Open Sans", sans-serif; fill: var(--text); text-anchor: middle; }
+  .ext-end { font-size: 13px; fill: var(--muted); text-anchor: middle; }
+  .ext-turns { font-size: 11px; fill: var(--muted); text-anchor: middle; }
+  .ext-quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .ext-quick .btn { padding: 12px 6px; }
+  .pc-ext, .r-ext { color: var(--orange); font-weight: 700; }
+  .pc.clash, .mini.clash { outline: 2px solid var(--red); outline-offset: -2px; }
+
   /* Arbeitsbericht (dezent) */
   .report summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; list-style: none; }
   .report summary::-webkit-details-marker { display: none; }
@@ -573,6 +594,38 @@
       <button class="btn primary">Ändern</button>
     </div>
   </form>
+</dialog>
+
+<!-- Dauert länger: Drehuhr (Monteur) -->
+<dialog class="form-dlg pw-dlg" id="extDlg">
+  <div class="fbody">
+    <div class="fhead">
+      <button type="button" class="sh-back" style="position:static;background:var(--field);color:var(--text)" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+      <h2>Wie viel länger dauert es?</h2>
+    </div>
+    <p class="hint" id="extJob"></p>
+    <svg id="extDial" viewBox="0 0 240 240" role="slider" aria-label="Zusätzliche Dauer" aria-valuemin="5" aria-valuemax="240">
+      <circle class="ext-track" cx="120" cy="120" r="96"/>
+      <circle class="ext-lap" id="extLap" cx="120" cy="120" r="96"/>
+      <path class="ext-arc" id="extArc" d=""/>
+      <g id="extTicks"></g>
+      <circle class="ext-knob" id="extKnob" r="16" cx="120" cy="24"/>
+      <text class="ext-mid" id="extMid" x="120" y="118"></text>
+      <text class="ext-end" id="extEnd" x="120" y="144"></text>
+      <text class="ext-turns" id="extTurns" x="120" y="164"></text>
+    </svg>
+    <p class="hint" style="text-align:center">Am Punkt im Uhrzeigersinn drehen · eine Runde = 1 Std.</p>
+    <div class="ext-quick">
+      <button type="button" class="btn" data-ext="30">+30 Min.</button>
+      <button type="button" class="btn" data-ext="60">+1 Std.</button>
+      <button type="button" class="btn" data-ext="120">+2 Std.</button>
+    </div>
+    <p class="err" id="extErr"></p>
+    <div class="factions">
+      <button class="btn" type="button" data-close>Abbrechen</button>
+      <button class="btn orange" type="button" id="extSave">Ans Büro melden</button>
+    </div>
+  </div>
 </dialog>
 
 <!-- Kunde mit Auftragsverlauf -->

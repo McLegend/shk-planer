@@ -59,6 +59,18 @@ const arrMin = j => { const a = arrivedAt(j); return a && ymd(a) === j.datum ? a
 const estEnd = j => j.dauerVorOrt && arrMin(j) !== null ? arrMin(j) + Number(j.dauerVorOrt) : null;
 // Ende in der Plantafel: echte Fertig-Zeit, sonst Schätzung vor Ort, sonst Beginn + geplante Dauer (ohne Angabe 1 Std.)
 const planEnd = j => endMin(j) ?? estEnd(j) ?? toMin(j.von) + (Number(j.dauer) || 60);
+// Geplantes Ende laut Büro und wie viele Minuten der Monteur darüber liegt („Dauert länger“)
+const plannedEnd = j => toMin(j.von) + (Number(j.dauer) || 60);
+// Späte Ankunft zählt nicht mit: nur so viel, wie die Arbeit selbst länger dauert als geplant (auf 5 Min. gerundet)
+const overrun = j => {
+  const e = estEnd(j);
+  if (j.status === 'fertig' || e === null) return 0;
+  const over = Math.min(e - plannedEnd(j), Number(j.dauerVorOrt) - (Number(j.dauer) || 60));
+  return over > 0 ? Math.max(5, Math.round(over / 5) * 5) : 0;
+};
+// Ein offener Auftrag, der durch die Verlängerung eines früheren Auftrags desselben Monteurs überschnitten wird
+const clashedBy = (j, list) => j.status !== 'fertig' && list.some(o => o.id !== j.id && o.mitarbeiter === j.mitarbeiter && o.datum === j.datum
+  && overrun(o) && toMin(o.von) <= toMin(j.von) && toMin(j.von) < planEnd(o));
 const DUR_OPTS = [[30, '30 Min.'], [60, '1 Std.'], [90, '1,5 Std.'], [120, '2 Std.'], [180, '3 Std.'], [240, '4 Std.'], [360, '6 Std.'], [480, '8 Std.']];
 const dauerText = m => m ? `ca. ${duration(Number(m))}` : '';
 const shortDate = k => parseYmd(k).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
@@ -220,6 +232,13 @@ function enterOffice() {
   }));
   ui.jobsFrom = windowStart();
   ui.jobsCtl = store.watchAllJobs(js => {
+    // Hinweis, wenn ein Monteur gerade „Dauert länger“ gemeldet hat
+    const before = new Map(ui.jobs.map(j => [j.id, Number(j.dauerVorOrt) || 0]));
+    for (const j of js) {
+      if (before.has(j.id) && (Number(j.dauerVorOrt) || 0) > before.get(j.id) && overrun(j)) {
+        notice(`${workerName(j.mitarbeiter)}: „${titleOf(j)}“ dauert länger – fertig ca. ${fromMin(estEnd(j))} Uhr (+${duration(overrun(j))} über Plan).`);
+      }
+    }
     ui.jobs = sortJobs(js);
     refresh();
     if ($('#detailDlg').open) renderDetail();
@@ -494,9 +513,10 @@ function planDay() {
       const j = it.j;
       const left = (it.s - start * 60) / 60 * hw + 2;
       const width = Math.max((it.e - it.s) / 60 * hw - 4, 64);
-      return `<button class="pc st-${cardState(j)}" data-id="${esc(j.id)}" style="left:${left}px;top:${6 + it.lane * 62}px;width:${width}px;height:56px">
+      const ext = overrun(j);
+      return `<button class="pc st-${cardState(j)}${clashedBy(j, dayJobs) ? ' clash' : ''}" data-id="${esc(j.id)}" style="left:${left}px;top:${6 + it.lane * 62}px;width:${width}px;height:56px"${clashedBy(j, dayJobs) ? ' title="Terminkonflikt: vorheriger Auftrag dauert länger"' : ''}>
         <span class="pc-t">${esc(titleOf(j))}</span>
-        <span class="pc-s">${teamSize(j) > 1 ? `👥${teamSize(j)} · ` : ''}${esc(timeRange(j))}${j.auftrag ? ' · ' + esc(j.kunde) : ''}</span>
+        <span class="pc-s">${ext ? `<span class="pc-ext">+${esc(duration(ext))} · bis ${fromMin(estEnd(j))}</span> · ` : ''}${teamSize(j) > 1 ? `👥${teamSize(j)} · ` : ''}${esc(timeRange(j))}${j.auftrag ? ' · ' + esc(j.kunde) : ''}</span>
         <span class="pc-s">${esc([j.plz, j.ort].filter(Boolean).join(' '))}</span>
         <span class="dot"></span></button>`;
     }).join('');
@@ -525,7 +545,7 @@ function planWeek() {
       <div class="pt-who">${avatar(r.nr, r.name)}<span class="nm">${esc(r.name)}</span></div>
       ${keys.map(k => { const abs = absenceOf(r.nr, k); return `<div class="wk-cell ${abs ? 'abs' : ''}" data-nr="${esc(r.nr)}" data-day="${k}">${abs ? absTag(abs) : ''}${ui.jobs
         .filter(j => j.datum === k && j.mitarbeiter === r.nr)
-        .map(j => `<button class="mini st-${cardState(j)}" data-id="${esc(j.id)}" title="${esc(titleOf(j))}"><b>${esc(j.von)}</b>${esc(titleOf(j))}</button>`)
+        .map((j, _, cellJobs) => `<button class="mini st-${cardState(j)}${clashedBy(j, cellJobs) ? ' clash' : ''}" data-id="${esc(j.id)}" title="${esc(titleOf(j))}"><b>${esc(j.von)}</b>${overrun(j) ? `<span class="pc-ext">+${esc(duration(overrun(j)))}</span> ` : ''}${esc(titleOf(j))}</button>`)
         .join('')}</div>`; }).join('')}
     </div>`).join('');
   return `<div class="pt" id="ptScroll">${head}${rows}</div>`;
@@ -896,12 +916,16 @@ function renderDetail() {
   if (a && !done) {
     const est = estEnd(j);
     const estTxt = est !== null && est < 24 * 60 ? `fertig ca. ${fromMin(est)} Uhr` : '';
+    const ext = overrun(j);
+    const extTxt = ext ? `<br><span class="r-ext">+${esc(duration(ext))} länger als geplant</span>` : '';
     if (!office) {
+      // Krumme Werte (z. B. von der Drehuhr) als eigene Option zeigen
+      const opts = DUR_OPTS.some(([m]) => m === Number(j.dauerVorOrt)) || !j.dauerVorOrt ? DUR_OPTS : [...DUR_OPTS, [Number(j.dauerVorOrt), duration(Number(j.dauerVorOrt))]].sort((x, y) => x[0] - y[0]);
       work += `<div class="row">${icon('clock')}<div><label for="estDur">Dauert voraussichtlich</label>
-        <div class="inl-row"><select class="inl" id="estDur"><option value="">bitte wählen</option>${DUR_OPTS.map(([m, t]) => `<option value="${m}"${Number(j.dauerVorOrt) === m ? ' selected' : ''}>${t}</option>`).join('')}</select>
-        ${estTxt ? `<span class="hint">→ ${estTxt}</span>` : ''}</div></div></div>`;
+        <div class="inl-row"><select class="inl" id="estDur"><option value="">bitte wählen</option>${opts.map(([m, t]) => `<option value="${m}"${Number(j.dauerVorOrt) === m ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
+        ${estTxt ? `<span class="hint">→ ${estTxt}</span>` : ''}</div>${extTxt}</div></div>`;
     } else if (j.dauerVorOrt) {
-      work += `<div class="row">${icon('clock')}<div>Monteur schätzt ${esc(dauerText(j.dauerVorOrt))}${estTxt ? `<br><span class="hint">${estTxt}</span>` : ''}</div></div>`;
+      work += `<div class="row">${icon('clock')}<div>Monteur schätzt ${esc(dauerText(j.dauerVorOrt))}${estTxt ? `<br><span class="hint">${estTxt}</span>` : ''}${extTxt}</div></div>`;
     }
   }
   if (done && f) {
@@ -957,6 +981,7 @@ function renderDetail() {
       </div>
       ${report}
       ${!done && !a && !office ? '<button class="btn big outline" id="arrived">Angekommen</button>' : ''}
+      ${!done && a && !office ? `<button class="btn big outline orange" id="extend">${icon('clock')}Dauert länger</button>` : ''}
       <button class="btn big ${done ? '' : 'green'}" id="toggleDone">${done ? 'Wieder auf offen setzen' : '✓ Fertig'}</button>
       ${office ? `<div class="sh-actions"><button class="btn danger" id="deleteJob">Löschen</button><button class="btn" id="editJob">Bearbeiten</button></div>` : ''}
     </div>`;
@@ -978,6 +1003,7 @@ function renderDetail() {
   };
   if ($('#arrived')) $('#arrived').onclick = () => save({ angekommenAm: new Date().toISOString() }, $('#arrived'));
   if ($('#estDur')) $('#estDur').onchange = e => save({ dauerVorOrt: Number(e.target.value) || null }, null);
+  if ($('#extend')) $('#extend').onclick = () => openExtend(j);
   if ($('#saveEnd')) $('#saveEnd').onclick = () => {
     const t = $('#endTime').value;
     if (!t) { alert('Bitte eine Uhrzeit eingeben.'); return; }
@@ -1011,6 +1037,117 @@ function renderDetail() {
         ...rest.map(g => store.updateJob(g.id, { team: rest.length > 1 ? teamOf(rest.map(r => r.mitarbeiter)) : null })),
       ]);
     };
+  }
+}
+
+// ================= Dauert länger: Drehuhr (Monteur) =================
+// Der Monteur dreht, wie viel länger es dauert (eine Runde = 1 Std., 5-Minuten-Schritte, max. 4 Std.).
+// Gespeichert wird nur das bestehende Feld dauerVorOrt (Minuten ab Ankunft) – keine neuen Felder, Regeln unverändert.
+const EXT = { C: 120, R: 96, MIN: 5, MAX: 240, SNAP: 5 };
+const ext = { job: null, cur: 30, target: 30, last: null, raf: 0 };
+const extMinutes = () => Math.max(EXT.MIN, Math.round(ext.cur / EXT.SNAP) * EXT.SNAP);
+
+// Bisher erwartetes Ende als Zeitpunkt: Schätzung vor Ort, sonst Plan. Ist das schon vorbei, zählt „jetzt“.
+function extBase(j) {
+  const plan = new Date(`${j.datum}T${j.von}`);
+  plan.setMinutes(plan.getMinutes() + (Number(j.dauer) || 60));
+  const a = arrivedAt(j);
+  const est = a && j.dauerVorOrt ? new Date(a.getTime() + Number(j.dauerVorOrt) * 60000) : plan;
+  return new Date(Math.max(est.getTime(), Date.now()));
+}
+
+function initExtDial() {
+  const { C, R } = EXT;
+  let ticks = '';
+  for (let i = 0; i < 12; i++) {
+    const a = i * 30 * Math.PI / 180, big = i % 3 === 0, r1 = R - (big ? 11 : 9), r2 = R + (big ? 11 : 9);
+    ticks += `<line class="ext-tick" stroke-width="${big ? 2 : 1}" x1="${C + Math.sin(a) * r1}" y1="${C - Math.cos(a) * r1}" x2="${C + Math.sin(a) * r2}" y2="${C - Math.cos(a) * r2}"/>`;
+  }
+  $('#extTicks').innerHTML = ticks;
+  const dial = $('#extDial');
+  const angle = e => { const r = dial.getBoundingClientRect(); return Math.atan2(e.clientX - r.left - r.width / 2, -(e.clientY - r.top - r.height / 2)) * 180 / Math.PI; };
+  dial.addEventListener('pointerdown', e => { cancelAnimationFrame(ext.raf); ext.last = angle(e); dial.setPointerCapture(e.pointerId); dial.classList.add('drag'); });
+  dial.addEventListener('pointermove', e => {
+    if (ext.last === null) return;
+    const a = angle(e);
+    let d = a - ext.last;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    ext.last = a;
+    ext.cur = ext.target = Math.min(EXT.MAX, Math.max(EXT.MIN, ext.cur + d / 360 * 60));
+    drawExt();
+  });
+  const release = () => { if (ext.last === null) return; ext.last = null; dial.classList.remove('drag'); extTo(Math.round(ext.cur / EXT.SNAP) * EXT.SNAP); };
+  dial.addEventListener('pointerup', release);
+  dial.addEventListener('pointercancel', release);
+  // Tastatur: Pfeiltasten ± 5 Min.
+  dial.tabIndex = 0;
+  dial.addEventListener('keydown', e => {
+    const s = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5 }[e.key];
+    if (s) { e.preventDefault(); extTo(extMinutes() + s); }
+  });
+  document.querySelectorAll('[data-ext]').forEach(b => b.onclick = () => extTo(Number(b.dataset.ext)));
+  $('#extSave').onclick = saveExtend;
+}
+
+// Weich zum Zielwert gleiten (Einrasten, Schnellknöpfe)
+function extTo(t) {
+  ext.target = Math.min(EXT.MAX, Math.max(EXT.MIN, t));
+  cancelAnimationFrame(ext.raf);
+  const step = () => {
+    const d = ext.target - ext.cur;
+    if (Math.abs(d) < 0.3) { ext.cur = ext.target; drawExt(); return; }
+    ext.cur += d * 0.22;
+    drawExt();
+    ext.raf = requestAnimationFrame(step);
+  };
+  ext.raf = requestAnimationFrame(step);
+}
+
+function drawExt() {
+  const { C, R } = EXT;
+  const pt = deg => { const a = deg * Math.PI / 180; return [C + Math.sin(a) * R, C - Math.cos(a) * R]; };
+  const shown = (ext.cur / 60 * 360) % 360;
+  const [x, y] = pt(shown), [sx, sy] = pt(0);
+  $('#extArc').setAttribute('d', shown < 0.5 ? '' : `M${sx} ${sy} A${R} ${R} 0 ${shown > 180 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)}`);
+  $('#extLap').style.display = ext.cur >= 60 ? '' : 'none';
+  $('#extKnob').setAttribute('cx', x.toFixed(2));
+  $('#extKnob').setAttribute('cy', y.toFixed(2));
+  const m = extMinutes();
+  $('#extMid').textContent = '+' + duration(m);
+  if (ext.job) $('#extEnd').textContent = `fertig ca. ${hm(new Date(extBase(ext.job).getTime() + m * 60000))} Uhr`;
+  const full = Math.floor(ext.cur / 60);
+  $('#extTurns').textContent = full ? `${full} volle Runde${full > 1 ? 'n' : ''}` : '';
+  $('#extDial').setAttribute('aria-valuenow', m);
+  $('#extDial').setAttribute('aria-valuetext', '+' + duration(m));
+}
+
+function openExtend(j) {
+  ext.job = j;
+  ext.cur = ext.target = 30;
+  ext.last = null;
+  $('#extErr').textContent = '';
+  $('#extJob').textContent = `${titleOf(j)} · bisher fertig ca. ${hm(extBase(j))} Uhr`;
+  drawExt();
+  $('#extDlg').showModal();
+}
+
+async function saveExtend() {
+  const j = ui.jobs.find(x => x.id === ext.job?.id);
+  const a = j && arrivedAt(j);
+  if (!j || !a) { $('#extErr').textContent = 'Dieser Auftrag ist nicht mehr offen.'; return; }
+  const end = extBase(j).getTime() + extMinutes() * 60000;
+  // Sicherheitsregeln erlauben 1–1440 Minuten ab Ankunft
+  const dauerVorOrt = Math.min(1440, Math.max(1, Math.round((end - a.getTime()) / 60000)));
+  const btn = $('#extSave');
+  btn.disabled = true;
+  try {
+    await store.updateJob(j.id, { dauerVorOrt });
+    $('#extDlg').close();
+  } catch (x) {
+    $('#extErr').textContent = 'Speichern fehlgeschlagen. Bitte erneut versuchen.';
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -1421,6 +1558,8 @@ function bindEvents() {
 
   // Büro: Aufträge in der Plantafel verschieben
   bindDrag();
+  // Monteur: Drehuhr „Dauert länger“
+  initExtDial();
 
   // Dialoge schließen
   document.addEventListener('click', e => { const x = e.target.closest('[data-close]'); if (x) x.closest('dialog').close(); });
