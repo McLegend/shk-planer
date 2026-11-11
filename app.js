@@ -39,6 +39,7 @@ const ICONS = {
   trash: 'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z',
   map: 'M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z',
 };
+ICONS.download = 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z';
 const icon = n => `<svg class="i" viewBox="0 0 24 24"><path d="${ICONS[n]}"/></svg>`;
 
 // ---- Aufträge: Status, Zeiten, Adresse ----
@@ -71,6 +72,8 @@ const overrun = j => {
 // Ein offener Auftrag, der durch die Verlängerung eines früheren Auftrags desselben Monteurs überschnitten wird
 const clashedBy = (j, list) => j.status !== 'fertig' && list.some(o => o.id !== j.id && o.mitarbeiter === j.mitarbeiter && o.datum === j.datum
   && overrun(o) && toMin(o.von) <= toMin(j.von) && toMin(j.von) < planEnd(o));
+// Wird ein Auftrag auf einen anderen Tag oder Monteur gelegt, verfallen Ankunft und Schätzung vor Ort
+const resetArrival = j => j.angekommenAm || j.dauerVorOrt ? { angekommenAm: null, dauerVorOrt: null } : {};
 const DUR_OPTS = [[30, '30 Min.'], [60, '1 Std.'], [90, '1,5 Std.'], [120, '2 Std.'], [180, '3 Std.'], [240, '4 Std.'], [360, '6 Std.'], [480, '8 Std.']];
 const dauerText = m => m ? `ca. ${duration(Number(m))}` : '';
 const shortDate = k => parseYmd(k).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
@@ -141,7 +144,7 @@ const ui = {
   view: 'plan', mode: 'day', day: todayKey(), filter: '',
   listStatus: 'alle', listRange: 'alle', listPast: false, search: '',
   wPage: 'termine', wTab: 'geplant',
-  detailId: null, editId: null, plan: { start: 6, hw: 90 }, scrollPlan: false,
+  detailId: null, editId: null, plan: { start: 6, hw: 90 }, scrollPlan: false, teamAll: true,
 };
 let store;
 
@@ -236,7 +239,7 @@ function enterOffice() {
     const before = new Map(ui.jobs.map(j => [j.id, Number(j.dauerVorOrt) || 0]));
     for (const j of js) {
       if (before.has(j.id) && (Number(j.dauerVorOrt) || 0) > before.get(j.id) && overrun(j)) {
-        notice(`${workerName(j.mitarbeiter)}: „${titleOf(j)}“ dauert länger – fertig ca. ${fromMin(estEnd(j))} Uhr (+${duration(overrun(j))} über Plan).`);
+        notice(`${workerName(j.mitarbeiter)}: „${titleOf(j)}“ dauert länger – fertig ca. ${fromMin(estEnd(j))} Uhr statt ${fromMin(plannedEnd(j))} Uhr (${duration(overrun(j))} über Plan).`);
       }
     }
     ui.jobs = sortJobs(js);
@@ -375,6 +378,26 @@ function setView(v) {
         <thead><tr><th>Kunde</th><th class="hide-t">Adresse</th><th class="hide-t">Telefon</th><th>Letzter Auftrag</th><th></th></tr></thead>
         <tbody id="custBody"></tbody></table></div>
       <div class="count" id="custCount"></div>`;
+  } else if (v === 'backup') {
+    const last = lsGet('shk-backup');
+    c.innerHTML = `
+      <div class="page-head"><h1>Datensicherung</h1></div>
+      <div class="card">
+        <h2>Komplette Sicherung</h2>
+        <p class="hint" style="margin-bottom:12px">Alle Aufträge, Kunden, Mitarbeiter und Abwesenheiten in einer Datei – zum Aufbewahren für den Notfall. Ein Zurückspielen per Knopf gibt es noch nicht.</p>
+        <button class="btn primary" data-backup="json">${icon('download')}Sicherung herunterladen</button>
+        <p class="hint" id="backupLast" style="margin-top:10px">${isDay(last) ? `Letzte Sicherung auf diesem Gerät: ${parseYmd(last).toLocaleDateString('de-DE')}` : 'Auf diesem Gerät wurde noch keine Sicherung erstellt.'}</p>
+      </div>
+      <div class="card">
+        <h2>Als Tabelle für Excel</h2>
+        <p class="hint" style="margin-bottom:12px">Zum Ansehen, Filtern oder Drucken.</p>
+        <div class="bk-btns">
+          <button class="btn" data-backup="jobs">${icon('download')}Aufträge (.csv)</button>
+          <button class="btn" data-backup="customers">${icon('download')}Kunden (.csv)</button>
+        </div>
+      </div>
+      <p class="err" id="backupErr"></p>
+      <p class="hint">Die Dateien enthalten Kunden- und Mitarbeiterdaten. Bitte nur an einem geschützten Ort speichern und nicht weitergeben. Die Löschfristen gelten auch für Kopien: alte Sicherungen regelmäßig löschen.</p>`;
   } else {
     c.innerHTML = `
       <div class="page-head"><h1>Mitarbeiter</h1></div>
@@ -516,7 +539,7 @@ function planDay() {
       const ext = overrun(j);
       return `<button class="pc st-${cardState(j)}${clashedBy(j, dayJobs) ? ' clash' : ''}" data-id="${esc(j.id)}" style="left:${left}px;top:${6 + it.lane * 62}px;width:${width}px;height:56px"${clashedBy(j, dayJobs) ? ' title="Terminkonflikt: vorheriger Auftrag dauert länger"' : ''}>
         <span class="pc-t">${esc(titleOf(j))}</span>
-        <span class="pc-s">${ext ? `<span class="pc-ext">+${esc(duration(ext))} · bis ${fromMin(estEnd(j))}</span> · ` : ''}${teamSize(j) > 1 ? `👥${teamSize(j)} · ` : ''}${esc(timeRange(j))}${j.auftrag ? ' · ' + esc(j.kunde) : ''}</span>
+        <span class="pc-s">${ext ? `<span class="pc-ext">bis ${fromMin(estEnd(j))} statt ${fromMin(plannedEnd(j))}</span> · ` : ''}${teamSize(j) > 1 ? `👥${teamSize(j)} · ` : ''}${esc(timeRange(j))}${j.auftrag ? ' · ' + esc(j.kunde) : ''}</span>
         <span class="pc-s">${esc([j.plz, j.ort].filter(Boolean).join(' '))}</span>
         <span class="dot"></span></button>`;
     }).join('');
@@ -545,7 +568,7 @@ function planWeek() {
       <div class="pt-who">${avatar(r.nr, r.name)}<span class="nm">${esc(r.name)}</span></div>
       ${keys.map(k => { const abs = absenceOf(r.nr, k); return `<div class="wk-cell ${abs ? 'abs' : ''}" data-nr="${esc(r.nr)}" data-day="${k}">${abs ? absTag(abs) : ''}${ui.jobs
         .filter(j => j.datum === k && j.mitarbeiter === r.nr)
-        .map((j, _, cellJobs) => `<button class="mini st-${cardState(j)}${clashedBy(j, cellJobs) ? ' clash' : ''}" data-id="${esc(j.id)}" title="${esc(titleOf(j))}"><b>${esc(j.von)}</b>${overrun(j) ? `<span class="pc-ext">+${esc(duration(overrun(j)))}</span> ` : ''}${esc(titleOf(j))}</button>`)
+        .map((j, _, cellJobs) => `<button class="mini st-${cardState(j)}${clashedBy(j, cellJobs) ? ' clash' : ''}" data-id="${esc(j.id)}" title="${esc(titleOf(j))}"><b>${esc(j.von)}</b>${overrun(j) ? `<span class="pc-ext">bis ${fromMin(estEnd(j))}</span>` : ''}${esc(titleOf(j))}</button>`)
         .join('')}</div>`; }).join('')}
     </div>`).join('');
   return `<div class="pt" id="ptScroll">${head}${rows}</div>`;
@@ -917,7 +940,7 @@ function renderDetail() {
     const est = estEnd(j);
     const estTxt = est !== null && est < 24 * 60 ? `fertig ca. ${fromMin(est)} Uhr` : '';
     const ext = overrun(j);
-    const extTxt = ext ? `<br><span class="r-ext">+${esc(duration(ext))} länger als geplant</span>` : '';
+    const extTxt = ext ? `<br><span class="r-ext">${esc(duration(ext))} über Plan · geplant war bis ${fromMin(plannedEnd(j))} Uhr</span>` : '';
     if (!office) {
       // Krumme Werte (z. B. von der Drehuhr) als eigene Option zeigen
       const opts = DUR_OPTS.some(([m]) => m === Number(j.dauerVorOrt)) || !j.dauerVorOrt ? DUR_OPTS : [...DUR_OPTS, [Number(j.dauerVorOrt), duration(Number(j.dauerVorOrt))]].sort((x, y) => x[0] - y[0]);
@@ -933,12 +956,12 @@ function renderDetail() {
     const mins = Math.round((f - from) / 60000);
     work += `<div class="row">${icon('clock')}<div>Fertig ${fmtTime(f)}</div>${mins > 0 && mins < 24 * 60 ? `<span class="r">${duration(mins)}${a ? '' : ' ab Plan'}</span>` : ''}</div>`;
   } else if (!office) {
-    work += `<div class="info">${icon('info')}<span>${a ? 'Erst nach Abschluss der Arbeiten „Fertig“ drücken – die Uhrzeit wird automatisch eingetragen.' : 'Beim Kunden „Angekommen“ drücken, nach Abschluss „Fertig“. Die Uhrzeiten werden automatisch eingetragen.'}</span></div>`;
+    work += `<div class="info">${icon('info')}<span>${a ? 'Erst nach Abschluss der Arbeiten „Fertig“ drücken – die Uhrzeit wird automatisch eingetragen.' : 'Beim Kunden „Angekommen“ drücken, nach Abschluss „Fertig“. Die Uhrzeiten werden automatisch eingetragen.'}${others(j).length ? ' Im Team meldet sich jeder Monteur selbst fertig.' : ''}</span></div>`;
   }
   // Büro: Endzeit nachträglich eintragen oder korrigieren
   if (office) {
     work += `<div class="row">${icon('clock')}<div><label for="endTime">${done && f ? 'Endzeit ändern' : 'Endzeit nachtragen'}</label>
-      <div class="inl-row"><input class="inl" type="time" id="endTime" value="${done && f && ymd(f) === j.datum ? hm(f) : ''}">
+      <div class="inl-row"><input class="inl" type="time" id="endTime" data-job="${esc(j.id)}" value="${done && f && ymd(f) === j.datum ? hm(f) : ''}">
       <button class="btn" type="button" id="saveEnd">Speichern</button></div></div></div>`;
   }
 
@@ -946,14 +969,26 @@ function renderDetail() {
   const rep = j.bericht || '';
   const report = office
     ? (rep ? `<div class="sec"><div class="sec-head"><p class="sec-title">Bericht</p></div><div class="row">${icon('notes')}<div>${esc(rep)}</div></div></div>` : '')
-    : `<details class="report" ${rep ? 'open' : ''}><summary>Arbeitsbericht${rep ? '' : ' (optional)'}</summary>
-        <textarea id="reportText" maxlength="2000" placeholder="Was wurde gemacht? Verbrauchtes Material …">${esc(rep)}</textarea>
+    : `<details class="report" data-job="${esc(j.id)}" ${rep ? 'open' : ''}><summary>Arbeitsbericht${rep ? '' : ' (optional)'}</summary>
+        <textarea id="reportText" data-job="${esc(j.id)}" maxlength="2000" placeholder="Was wurde gemacht? Verbrauchtes Material …">${esc(rep)}</textarea>
         <div style="margin-top:6px"><button class="btn" id="saveReport" type="button">Bericht speichern</button><span class="saved" id="reportSaved"></span></div>
       </details>`;
 
   // Karte nur laden, wenn sich die Adresse geändert hat (sonst flackert sie bei Live-Updates)
   const oldFrame = $('#detailBody iframe');
   const keepFrame = oldFrame && oldFrame.dataset.addr === address(j);
+
+  // Ungespeicherte Eingaben (Bericht, Endzeit) überstehen Live-Updates desselben Auftrags
+  const keepInput = sel => {
+    const el = $(sel);
+    return el && el.dataset.job === j.id
+      ? { value: el.value, dirty: el.value !== el.defaultValue, focus: document.activeElement === el, a: el.selectionStart, b: el.selectionEnd } : null;
+  };
+  const draftReport = keepInput('#reportText'), draftEnd = keepInput('#endTime');
+  const oldDetails = $('#detailBody details.report');
+  const reportOpen = !!oldDetails && oldDetails.dataset.job === j.id && oldDetails.open;
+  // Team-Auftrag: Kollegen, die noch nicht fertig gemeldet sind (das Büro kann sie mit erledigen)
+  const mates = office && !done ? groupOf(j).filter(g => g.id !== j.id && g.status !== 'fertig') : [];
 
   $('#detailBody').innerHTML = `
     ${hasAddr ? `<div class="sh-map">
@@ -982,10 +1017,21 @@ function renderDetail() {
       ${report}
       ${!done && !a && !office ? '<button class="btn big outline" id="arrived">Angekommen</button>' : ''}
       ${!done && a && !office ? `<button class="btn big outline orange" id="extend">${icon('clock')}Dauert länger</button>` : ''}
+      ${mates.length ? `<label class="save-cust" style="margin:0"><input type="checkbox" id="teamAll"${ui.teamAll ? ' checked' : ''}> Auch für ${esc(mates.map(g => workerName(g.mitarbeiter)).join(', '))} als erledigt eintragen</label>` : ''}
       <button class="btn big ${done ? '' : 'green'}" id="toggleDone">${done ? 'Wieder auf offen setzen' : '✓ Fertig'}</button>
       ${office ? `<div class="sh-actions"><button class="btn danger" id="deleteJob">Löschen</button><button class="btn" id="editJob">Bearbeiten</button></div>` : ''}
     </div>`;
   if (keepFrame) $('#frameSlot').replaceWith(oldFrame);
+  const restoreInput = (sel, d) => {
+    const el = $(sel);
+    if (!el || !d) return;
+    if (d.dirty) el.value = d.value;
+    if (d.focus) { el.focus(); try { el.setSelectionRange(d.a, d.b); } catch (e) {} }
+  };
+  restoreInput('#reportText', draftReport);
+  restoreInput('#endTime', draftEnd);
+  if (reportOpen && $('#detailBody details.report')) $('#detailBody details.report').open = true;
+  if ($('#teamAll')) $('#teamAll').onchange = e => { ui.teamAll = e.target.checked; };
 
   // Änderungen werden sofort angezeigt; ohne Netz überträgt Firebase sie später automatisch
   const save = async (data, btn) => {
@@ -994,9 +1040,15 @@ function renderDetail() {
     catch (x) { alert('Speichern fehlgeschlagen. Bitte erneut versuchen.'); if (btn) btn.disabled = false; }
   };
   const reportVal = () => $('#reportText') ? $('#reportText').value.trim() : null;
+  // Büro: Fertig-Meldung auch für die übrigen Monteure des Team-Auftrags eintragen (wenn angehakt)
+  const forTeam = data => {
+    if (!mates.length || !$('#teamAll')?.checked) return;
+    Promise.all(mates.map(g => store.updateJob(g.id, data))).catch(() => alert('Die Kollegen konnten nicht als erledigt eingetragen werden.'));
+  };
   $('#toggleDone').onclick = () => {
     if (done) return save({ status: 'offen', fertigAm: null }, $('#toggleDone'));
     const data = { status: 'fertig', fertigAm: new Date().toISOString() };
+    forTeam({ ...data });
     const r = reportVal();
     if (r !== null && r !== rep) data.bericht = r;
     save(data, $('#toggleDone'));
@@ -1011,6 +1063,7 @@ function renderDetail() {
     const start = a && ymd(a) === j.datum ? a : new Date(`${j.datum}T${j.von}`);
     if (end <= start && !confirm(`Die Endzeit ${t} Uhr liegt vor dem Beginn (${hm(start)} Uhr). Trotzdem speichern?`)) return;
     if (!done && !confirm('Der Auftrag wird damit als erledigt markiert. Fortfahren?')) return;
+    forTeam({ status: 'fertig', fertigAm: end.toISOString() });
     save({ status: 'fertig', fertigAm: end.toISOString() }, $('#saveEnd'));
   };
   if ($('#saveReport')) $('#saveReport').onclick = async () => {
@@ -1047,14 +1100,18 @@ const EXT = { C: 120, R: 96, MIN: 5, MAX: 240, SNAP: 5 };
 const ext = { job: null, cur: 30, target: 30, last: null, raf: 0 };
 const extMinutes = () => Math.max(EXT.MIN, Math.round(ext.cur / EXT.SNAP) * EXT.SNAP);
 
-// Bisher erwartetes Ende als Zeitpunkt: Schätzung vor Ort, sonst Plan. Ist das schon vorbei, zählt „jetzt“.
-function extBase(j) {
+// Bisher erwartetes Ende als Zeitpunkt: Schätzung vor Ort, sonst Plan
+// (Ankunft an einem anderen Tag als geplant: Ankunft + geplante Dauer).
+function extPrevEnd(j) {
+  const a = arrivedAt(j), dur = Number(j.dauer) || 60;
+  if (a && j.dauerVorOrt) return new Date(a.getTime() + Number(j.dauerVorOrt) * 60000);
+  if (a && ymd(a) !== j.datum) return new Date(a.getTime() + dur * 60000);
   const plan = new Date(`${j.datum}T${j.von}`);
-  plan.setMinutes(plan.getMinutes() + (Number(j.dauer) || 60));
-  const a = arrivedAt(j);
-  const est = a && j.dauerVorOrt ? new Date(a.getTime() + Number(j.dauerVorOrt) * 60000) : plan;
-  return new Date(Math.max(est.getTime(), Date.now()));
+  plan.setMinutes(plan.getMinutes() + dur);
+  return plan;
 }
+// Ist das bisherige Ende schon vorbei, zählt die Verlängerung ab jetzt
+const extBase = j => new Date(Math.max(extPrevEnd(j).getTime(), Date.now()));
 
 function initExtDial() {
   const { C, R } = EXT;
@@ -1127,7 +1184,11 @@ function openExtend(j) {
   ext.cur = ext.target = 30;
   ext.last = null;
   $('#extErr').textContent = '';
-  $('#extJob').textContent = `${titleOf(j)} · bisher fertig ca. ${hm(extBase(j))} Uhr`;
+  const prev = extPrevEnd(j), now = new Date();
+  const when = d => ymd(d) === ymd(now) ? `${hm(d)} Uhr` : `${d.toLocaleDateString('de-DE')} ${hm(d)} Uhr`;
+  $('#extJob').textContent = prev < now
+    ? `${titleOf(j)} · Das bisherige Ende (${when(prev)}) ist schon vorbei. Die Verlängerung zählt deshalb ab jetzt (${hm(now)} Uhr).`
+    : `${titleOf(j)} · bisher fertig ca. ${when(prev)}`;
   drawExt();
   $('#extDlg').showModal();
 }
@@ -1275,6 +1336,7 @@ async function saveForm(e) {
       if (!d) { ops.push(() => store.addJob({ ...fresh(nr), ...extra })); return; }
       const data = { ...shared, ...extra };
       if (d.mitarbeiter !== nr) Object.assign(data, { mitarbeiter: nr, mitarbeiterUid: worker(nr)?.uid || null });
+      if (d.status !== 'fertig' && (d.mitarbeiter !== nr || d.datum !== shared.datum)) Object.assign(data, resetArrival(d));
       ops.push(() => store.updateJob(d.id, { ...data, kundeId: shared.kundeId }));
     });
     removed.forEach(g => ops.push(() => store.deleteJob(g.id)));
@@ -1307,29 +1369,70 @@ function bindDrag() {
   };
 
   $('#content').addEventListener('pointerdown', e => {
-    if (e.button !== 0 || e.pointerType === 'touch') return; // am Handy bleibt Wischen zum Scrollen
+    if (e.button !== 0) return;
     const el = e.target.closest('.pc, .mini');
     const j = el && ui.jobs.find(x => x.id === el.dataset.id);
     if (!j || j.status === 'fertig') return;
     const r = el.getBoundingClientRect();
-    ui.drag = { el, j, x0: e.clientX, y0: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, active: false, target: null };
+    const touch = e.pointerType === 'touch';
+    const d = ui.drag = { el, j, touch, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height, active: false, target: null };
+    // Finger: Wischen scrollt weiterhin. Erst nach kurzem Gedrückthalten lässt sich der Auftrag ziehen.
+    if (touch) d.timer = setTimeout(() => {
+      if (ui.drag !== d || d.active) return;
+      start(d);
+      place(d);
+      try { navigator.vibrate?.(15); } catch (x) {}
+    }, 400);
   });
+
+  const start = d => {
+    d.active = true;
+    d.ghost = d.el.cloneNode(true);
+    d.ghost.classList.add('drag-ghost');
+    Object.assign(d.ghost.style, { width: d.w + 'px', height: d.h + 'px', top: 0, left: 0 });
+    d.tip = document.createElement('div');
+    d.tip.className = 'drag-time';
+    document.body.append(d.ghost, d.tip);
+    d.el.classList.add('dragging');
+    // Am Rand der Plantafel automatisch weiterscrollen
+    const tick = () => {
+      if (ui.drag !== d) return;
+      const pt = $('#ptScroll');
+      if (pt) {
+        const r = pt.getBoundingClientRect(), who = narrow.matches ? 64 : 150;
+        const vx = d.x > r.right - 40 ? 12 : d.x < r.left + who + 30 ? -12 : 0;
+        const vy = d.y > r.bottom - 30 ? 10 : d.y < r.top + 50 ? -10 : 0;
+        const bx = pt.scrollLeft, by = pt.scrollTop;
+        if (vx) pt.scrollLeft += vx;
+        if (vy) pt.scrollTop += vy;
+        if (pt.scrollLeft !== bx || pt.scrollTop !== by) place(d);
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
 
   addEventListener('pointermove', e => {
     const d = ui.drag;
     if (!d) return;
+    d.x = e.clientX; d.y = e.clientY;
     if (!d.active) {
-      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
-      d.active = true;
-      d.ghost = d.el.cloneNode(true);
-      d.ghost.classList.add('drag-ghost');
-      Object.assign(d.ghost.style, { width: d.w + 'px', height: d.h + 'px', top: 0, left: 0 });
-      d.tip = document.createElement('div');
-      d.tip.className = 'drag-time';
-      document.body.append(d.ghost, d.tip);
-      d.el.classList.add('dragging');
+      const far = Math.hypot(d.x - d.x0, d.y - d.y0);
+      // Finger bewegt sich vor Ablauf der Haltezeit: das ist Scrollen, kein Verschieben
+      if (d.touch) { if (far > 10) { clearTimeout(d.timer); ui.drag = null; } return; }
+      if (far < 6) return;
+      start(d);
     }
     e.preventDefault();
+    place(d);
+  });
+  // Während des Ziehens mit dem Finger darf die Seite nicht mitscrollen
+  document.addEventListener('touchmove', e => { if (ui.drag?.active) e.preventDefault(); }, { passive: false });
+  $('#content').addEventListener('contextmenu', e => { if (ui.drag?.touch) e.preventDefault(); });
+
+  // Geisterkarte an die Zeigerposition setzen und das Ziel darunter bestimmen
+  const place = d => {
+    const e = { clientX: d.x, clientY: d.y };
     d.ghost.style.transform = `translate(${e.clientX - d.dx}px, ${e.clientY - d.dy}px)`;
     const under = document.elementFromPoint(e.clientX, e.clientY);
     const lane = under?.closest('.pt-lane'), cell = under?.closest('.wk-cell');
@@ -1348,17 +1451,22 @@ function bindDrag() {
     }
     d.tip.hidden = !d.target;
     d.tip.style.left = e.clientX + 14 + 'px';
-    d.tip.style.top = e.clientY + 16 + 'px';
-  });
+    d.tip.style.top = e.clientY + (d.touch ? -64 : 16) + 'px'; // beim Finger über der Karte, sonst verdeckt
+  };
 
   addEventListener('pointerup', () => {
     const d = ui.drag;
     ui.drag = null;
-    if (!d || !d.active) return;
+    if (!d) return;
+    clearTimeout(d.timer);
+    if (!d.active) return;
     end(d);
     if (d.target) moveJob(d.j, d.target);
   });
-  addEventListener('pointercancel', () => { if (ui.drag?.active) end(ui.drag); ui.drag = null; });
+  addEventListener('pointercancel', () => {
+    if (ui.drag) { clearTimeout(ui.drag.timer); if (ui.drag.active) end(ui.drag); }
+    ui.drag = null;
+  });
   addEventListener('keydown', e => { if (e.key === 'Escape' && ui.drag?.active) { end(ui.drag); ui.drag = null; } });
 }
 
@@ -1380,13 +1488,78 @@ async function moveJob(j, t) {
     if (g.id === j.id) {
       const data = { mitarbeiter: t.nr, datum: t.datum, von: t.von, ...team };
       if (t.nr !== j.mitarbeiter) data.mitarbeiterUid = w.uid || null;
+      // Anderer Tag oder anderer Monteur: „Angekommen“ und die Schätzung gelten nicht mehr
+      if (t.nr !== j.mitarbeiter || t.datum !== j.datum) Object.assign(data, resetArrival(g));
       return store.updateJob(g.id, data);
     }
     if (!timeChanged && !team.team) return null;
-    return g.status === 'fertig' && !team.team ? null : store.updateJob(g.id, { ...(timeChanged && g.status !== 'fertig' ? { datum: t.datum, von: t.von } : {}), ...team });
+    return g.status === 'fertig' && !team.team ? null : store.updateJob(g.id, {
+      ...(timeChanged && g.status !== 'fertig' ? { datum: t.datum, von: t.von, ...(t.datum !== g.datum ? resetArrival(g) : {}) } : {}), ...team });
   });
   try { await Promise.all(ops); }
   catch (x) { alert('Verschieben fehlgeschlagen.'); }
+}
+
+// ================= Datensicherung (Büro) =================
+const csvCell = v => {
+  let s = String(v ?? '');
+  // Excel soll Text nie als Formel ausführen (Telefonnummern wie +49 … bleiben unverändert)
+  if (/^[=@\t\r]/.test(s) || (/^[+-]/.test(s) && !/^[+-]?[\d\s()./-]+$/.test(s))) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+};
+// Semikolon und BOM, damit deutsches Excel Spalten und Umlaute richtig erkennt
+const toCsv = (head, rows) => '﻿' + [head, ...rows].map(r => r.map(csvCell).join(';')).join('\r\n');
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function doBackup(kind, btn) {
+  const err = $('#backupErr');
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    const day = todayKey();
+    const date = k => isDay(k) ? parseYmd(k).toLocaleDateString('de-DE') : (k || '');
+    const stamp = iso => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? `${d.toLocaleDateString('de-DE')} ${hm(d)}` : ''; };
+    if (kind === 'customers') {
+      download(`shk-planer-kunden-${day}.csv`, toCsv(
+        ['Name', 'Telefon', 'Straße', 'PLZ', 'Ort', 'Hinweis', 'Angelegt', 'Letzter Auftrag'],
+        ui.customers.map(c => [c.name, c.telefon, c.strasse, c.plz, c.ort, c.notiz, date(c.angelegt), date(lastJobOf(c))])), 'text/csv;charset=utf-8');
+      return;
+    }
+    // Ohne Netz käme nur der zwischengespeicherte Teil – das wäre keine vollständige Sicherung
+    if (store.mode === 'firebase' && !navigator.onLine) { err.textContent = 'Für die Sicherung wird eine Internetverbindung benötigt.'; return; }
+    // Alle Aufträge frisch abfragen, auch ältere, die gerade nicht geladen sind
+    const jobs = sortJobs(await store.jobsBefore('9999-12-31'));
+    if (kind === 'jobs') {
+      download(`shk-planer-auftraege-${day}.csv`, toCsv(
+        ['Datum', 'Uhrzeit', 'Status', 'Mitarbeiter-Nr.', 'Mitarbeiter', 'Team', 'Kunde', 'Telefon', 'Straße', 'PLZ', 'Ort', 'Auftrag', 'Notiz',
+          'Geplante Dauer (Min.)', 'Angekommen', 'Fertig', 'Arbeitsbericht'],
+        jobs.map(j => [date(j.datum), j.von, STATE_LABEL[stateOf(j)], j.mitarbeiter, workerName(j.mitarbeiter),
+          Array.isArray(j.team) ? j.team.map(t => t.name).join(', ') : '', j.kunde, j.telefon, j.strasse, j.plz, j.ort, j.auftrag, j.notiz,
+          j.dauer || '', stamp(j.angekommenAm), stamp(j.fertigAm), j.bericht])), 'text/csv;charset=utf-8');
+      return;
+    }
+    download(`shk-planer-sicherung-${day}.json`, JSON.stringify({
+      app: 'SHK-Planer', format: 1, erstellt: new Date().toISOString(),
+      mitarbeiter: ui.workers, auftraege: jobs, kunden: ui.customers, abwesenheiten: ui.absences,
+    }, null, 1), 'application/json');
+    lsSet('shk-backup', day);
+    if ($('#backupLast')) $('#backupLast').textContent = `Letzte Sicherung auf diesem Gerät: ${date(day)} · ${jobs.length} Aufträge, ${ui.customers.length} Kunden`;
+  } catch (x) {
+    console.error(x);
+    err.textContent = 'Sicherung fehlgeschlagen. Bitte Internetverbindung prüfen und erneut versuchen.';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ================= Passwort / PIN ändern =================
@@ -1446,6 +1619,8 @@ function bindEvents() {
   const c = $('#content');
   c.onclick = e => {
     if (ui.suppressClick) return; // Klick direkt nach dem Verschieben ignorieren
+    const bk = e.target.closest('[data-backup]');
+    if (bk) { doBackup(bk.dataset.backup, bk); return; }
     const delAbs = e.target.closest('[data-del-abs]');
     if (delAbs) { if (confirm('Eintrag löschen?')) store.deleteAbsence(delAbs.dataset.delAbs); return; }
     const cJob = e.target.closest('[data-cust-job]');
